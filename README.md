@@ -19,6 +19,8 @@ Python 3.9 or newer is sufficient for the core:
 cd /Users/gimhangunarathne/Documents/Gima
 python3 -m human_ai.cli init
 python3 -m human_ai.cli doctor
+printf 'GRANT CAMERA,MICROPHONE\\n' | python3 -m human_ai.cli permission-grant --scope camera --scope microphone --minutes 10
+python3 -m human_ai.cli permission-status
 python3 -m human_ai.cli ingest README.md
 python3 -m human_ai.cli search "multimodal memory"
 python3 -m human_ai.cli chat "What do you remember about this project?"
@@ -84,6 +86,25 @@ python3 -m human_ai.cli memory-approve kb_RECORD_ID
 Tool execution is disabled by default. When enabled, the runner accepts only
 configured executable names, uses the configured workspace as its working
 directory, captures output, enforces a timeout, and writes an audit event.
+
+## Scoped Permissions
+
+The agent never accepts a spoken password as authorization for full machine
+access. Speech can be replayed or misheard. It also never bypasses macOS privacy
+prompts, requests root privileges, or disables operating-system security.
+
+Start a short local permission session from the terminal instead:
+
+```bash
+python3 -m human_ai.cli permission-grant --scope camera --scope microphone --minutes 10
+python3 -m human_ai.cli permission-status
+python3 -m human_ai.cli permission-revoke
+```
+
+The terminal asks for an exact confirmation. Available scopes are `camera`,
+`files`, `microphone`, `tools`, and `web`. Grants expire automatically, are
+stored only under `.human-ai/`, and are recorded in the local audit CSV. The
+default maximum lifetime is 30 minutes.
 
 ## Media Commands
 

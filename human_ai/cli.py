@@ -8,6 +8,7 @@ from pathlib import Path
 from .agent import Agent
 from .config import load_config
 from .memory import Record
+from .permissions import ALLOWED_SCOPES, PermissionManager
 from .readers import read_file
 from .scene import LocalPersonDetector, save_observation
 from .services import (
@@ -28,6 +29,12 @@ def parser() -> argparse.ArgumentParser:
     commands.add_parser("init", help="Initialize local memory files")
     commands.add_parser("doctor", help="Report optional local capabilities")
     commands.add_parser("rebuild", help="Regenerate the disposable SQLite search index")
+
+    permission_grant = commands.add_parser("permission-grant", help="Start a short scoped permission session")
+    permission_grant.add_argument("--scope", action="append", choices=sorted(ALLOWED_SCOPES), required=True)
+    permission_grant.add_argument("--minutes", type=int, default=10)
+    commands.add_parser("permission-status", help="Show the current scoped permission session")
+    commands.add_parser("permission-revoke", help="End the current scoped permission session")
 
     ingest = commands.add_parser("ingest", help="Index a file or folder")
     ingest.add_argument("path")
@@ -135,6 +142,7 @@ def main(argv=None) -> int:
     args = parser().parse_args(argv)
     config = load_config(args.config)
     agent = Agent(config)
+    permissions = PermissionManager(config, agent.memory)
     try:
         if args.command == "init":
             print(f"Initialized memory in {config.resolved_data_dir}")
@@ -142,13 +150,28 @@ def main(argv=None) -> int:
             print(json.dumps(dependency_report(), indent=2))
         elif args.command == "rebuild":
             print(f"Rebuilt index with {agent.memory.rebuild_index()} records")
+        elif args.command == "permission-grant":
+            expected = f"GRANT {','.join(sorted(set(args.scope))).upper()}"
+            confirmation = input(f"Type {expected} to authorize this local session: ").strip()
+            if confirmation != expected:
+                raise PermissionError("Permission confirmation did not match")
+            grant = permissions.grant(args.scope, args.minutes)
+            print(f"Granted {', '.join(grant.scopes)} until {grant.expires_at}")
+        elif args.command == "permission-status":
+            grant = permissions.current()
+            print(json.dumps(grant.__dict__, indent=2) if grant else "No active permission session.")
+        elif args.command == "permission-revoke":
+            permissions.revoke()
+            print("Permission session revoked.")
         elif args.command == "ingest":
+            permissions.require("files")
             print(f"Indexed {agent.ingest(Path(args.path))} new chunks")
         elif args.command == "search":
             _print_search(agent.search(args.query, args.category, args.limit))
         elif args.command == "chat":
             print(agent.chat(args.message)) if args.message else _interactive_chat(agent)
         elif args.command == "web-import":
+            permissions.require("web")
             print(f"Imported for review as {agent.import_web(args.url, args.category)}")
         elif args.command == "memory-review":
             _print_search(agent.memory.list_by_status("review", args.limit))
@@ -165,6 +188,7 @@ def main(argv=None) -> int:
         elif args.command == "speak":
             Voice().speak(args.text)
         elif args.command in {"screen-capture", "camera-capture"}:
+            permissions.require("camera")
             capture = MediaCapture(config.resolved_data_dir / "media")
             path = (
                 capture.screen(args.name)
@@ -174,10 +198,12 @@ def main(argv=None) -> int:
             agent.memory.add_many(read_file(path))
             print(f"Captured and indexed {path}")
         elif args.command == "scene-observe":
+            permissions.require("files")
             observation = LocalPersonDetector(config).detect(Path(args.path))
             record_id = save_observation(agent.memory, observation)
             print(f"{observation.summary} Stored as {record_id}")
         elif args.command == "camera-observe":
+            permissions.require("camera")
             capture = MediaCapture(config.resolved_data_dir / "media" / "camera")
             path = capture.camera(args.name, args.device or config.vision.camera_device)
             agent.memory.add_many(read_file(path))
@@ -185,6 +211,7 @@ def main(argv=None) -> int:
             record_id = save_observation(agent.memory, observation)
             print(f"{observation.summary} Stored as {record_id}")
         elif args.command == "camera-monitor":
+            permissions.require("camera")
             capture = MediaCapture(config.resolved_data_dir / "media" / "camera")
             paths = monitor_camera(
                 capture, args.interval, args.frames, args.device or config.vision.camera_device
@@ -192,6 +219,7 @@ def main(argv=None) -> int:
             chunks = sum(agent.memory.add_many(read_file(path)) for path in paths)
             print(f"Captured {len(paths)} frames and indexed {chunks} new chunks")
         elif args.command == "video-analyze":
+            permissions.require("files")
             source = Path(args.path)
             analyzer = MediaAnalyzer(config.resolved_data_dir / "media")
             frames = analyzer.video_keyframes(source, args.seconds)
@@ -199,6 +227,7 @@ def main(argv=None) -> int:
             chunks += sum(agent.memory.add_many(read_file(path)) for path in frames)
             print(f"Extracted {len(frames)} frames and indexed {chunks} new chunks")
         elif args.command == "transcribe":
+            permissions.require("files")
             source = Path(args.path).expanduser().resolve()
             analyzer = MediaAnalyzer(config.resolved_data_dir / "media")
             text = analyzer.transcribe(source, Path(args.model))
@@ -223,6 +252,7 @@ def main(argv=None) -> int:
                 print(f"Local photo: {result.photo_path}")
             return 0 if result.activated else 2
         elif args.command == "wake-listen":
+            permissions.require("microphone")
             analyzer = MediaAnalyzer(config.resolved_data_dir / "media" / "wake_audio")
             assistant = WakeAssistant(config, agent.memory)
             for cycle in range(max(1, args.cycles)):
@@ -238,7 +268,7 @@ def main(argv=None) -> int:
             print("Wake word not detected.")
             return 2
         elif args.command == "tool":
-            result = SafeToolRunner(config).run(args.tool_args)
+            result = SafeToolRunner(config, agent.memory).run(args.tool_args)
             agent.memory.audit("tool", " ".join(args.tool_args), result.stderr[:500], str(result.returncode))
             sys.stdout.write(result.stdout)
             sys.stderr.write(result.stderr)

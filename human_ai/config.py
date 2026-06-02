@@ -58,6 +58,12 @@ class VisionConfig:
 
 
 @dataclass
+class PermissionConfig:
+    require_scoped_grants: bool = True
+    maximum_minutes: int = 30
+
+
+@dataclass
 class Config:
     name: str = "Gima"
     workspace: Path = Path(".")
@@ -67,6 +73,7 @@ class Config:
     tools: ToolConfig = field(default_factory=ToolConfig)
     wake: WakeConfig = field(default_factory=WakeConfig)
     vision: VisionConfig = field(default_factory=VisionConfig)
+    permissions: PermissionConfig = field(default_factory=PermissionConfig)
 
     @property
     def resolved_workspace(self) -> Path:

@@ -10,6 +10,7 @@ from typing import List, Optional
 
 from .config import Config
 from .memory import MemoryStore, Record
+from .permissions import PermissionManager
 from .readers import read_file
 from .scene import LocalPersonDetector, SceneObservation, save_observation
 from .services import MediaCapture, Voice
@@ -53,6 +54,7 @@ class WakeAssistant:
         photo_path: Optional[Path] = None
         observation: Optional[SceneObservation] = None
         if should_capture:
+            PermissionManager(self.config, self.memory).require("camera")
             timestamp = datetime.now().astimezone().strftime("%Y%m%d_%H%M%S")
             capture = MediaCapture(self.config.resolved_data_dir / "media" / "wake")
             photo_path = capture.camera(f"wake_{timestamp}.jpg", self.config.vision.camera_device)

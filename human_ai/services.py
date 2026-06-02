@@ -15,6 +15,8 @@ from pathlib import Path
 from typing import Dict, Iterable, List
 
 from .config import Config
+from .memory import MemoryStore
+from .permissions import PermissionManager
 
 
 class _TextExtractor(HTMLParser):
@@ -226,10 +228,12 @@ def monitor_camera(
 
 
 class SafeToolRunner:
-    def __init__(self, config: Config):
+    def __init__(self, config: Config, memory: MemoryStore):
         self.config = config
+        self.permissions = PermissionManager(config, memory)
 
     def run(self, command: List[str]) -> subprocess.CompletedProcess:
+        self.permissions.require("tools")
         if not self.config.tools.enabled:
             raise PermissionError("Tool execution is disabled in the configuration")
         if not command:

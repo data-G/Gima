@@ -40,5 +40,9 @@
     "detect_people_on_wake": false,
     "detector_command": [],
     "minimum_confidence": 0.5
+  },
+  "permissions": {
+    "require_scoped_grants": true,
+    "maximum_minutes": 30
   }
 }
