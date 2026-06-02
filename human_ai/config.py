@@ -49,6 +49,15 @@ class WakeConfig:
 
 
 @dataclass
+class VisionConfig:
+    camera_id: str = "webcam"
+    camera_device: str = "0"
+    detect_people_on_wake: bool = False
+    detector_command: List[str] = field(default_factory=list)
+    minimum_confidence: float = 0.50
+
+
+@dataclass
 class Config:
     name: str = "Gima"
     workspace: Path = Path(".")
@@ -57,6 +66,7 @@ class Config:
     web: WebConfig = field(default_factory=WebConfig)
     tools: ToolConfig = field(default_factory=ToolConfig)
     wake: WakeConfig = field(default_factory=WakeConfig)
+    vision: VisionConfig = field(default_factory=VisionConfig)
 
     @property
     def resolved_workspace(self) -> Path:

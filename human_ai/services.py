@@ -115,7 +115,7 @@ class MediaCapture:
         subprocess.run(["screencapture", "-x", str(target)], check=True)
         return target
 
-    def camera(self, output_name: str = "camera.jpg") -> Path:
+    def camera(self, output_name: str = "camera.jpg", device: str = "0") -> Path:
         target = (self.output_dir / output_name).resolve()
         if shutil.which("imagesnap"):
             subprocess.run(["imagesnap", "-w", "1", str(target)], check=True)
@@ -132,7 +132,7 @@ class MediaCapture:
                     "-framerate",
                     "1",
                     "-i",
-                    "0",
+                    device,
                     "-frames:v",
                     "1",
                     str(target),
@@ -213,11 +213,13 @@ class MediaAnalyzer:
         return target
 
 
-def monitor_camera(capture: MediaCapture, interval_seconds: int, frames: int) -> List[Path]:
+def monitor_camera(
+    capture: MediaCapture, interval_seconds: int, frames: int, device: str = "0"
+) -> List[Path]:
     """Capture a bounded sequence. A future detector can discard unchanged frames."""
     paths: List[Path] = []
     for index in range(max(1, frames)):
-        paths.append(capture.camera(f"camera_{index:05d}.jpg"))
+        paths.append(capture.camera(f"camera_{index:05d}.jpg", device))
         if index + 1 < frames:
             time.sleep(max(1, interval_seconds))
     return paths

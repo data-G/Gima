@@ -9,6 +9,7 @@ from .agent import Agent
 from .config import load_config
 from .memory import Record
 from .readers import read_file
+from .scene import LocalPersonDetector, save_observation
 from .services import (
     MediaAnalyzer,
     MediaCapture,
@@ -57,10 +58,19 @@ def parser() -> argparse.ArgumentParser:
 
     camera = commands.add_parser("camera-capture", help="Capture and index one camera frame")
     camera.add_argument("--name", default="camera.jpg")
+    camera.add_argument("--device", default=None, help="FFmpeg avfoundation video device")
 
     monitor = commands.add_parser("camera-monitor", help="Capture a bounded sequence of camera frames")
     monitor.add_argument("--frames", type=int, default=5)
     monitor.add_argument("--interval", type=int, default=5)
+    monitor.add_argument("--device", default=None, help="FFmpeg avfoundation video device")
+
+    observe = commands.add_parser("scene-observe", help="Count anonymous people in a local image")
+    observe.add_argument("path")
+
+    camera_observe = commands.add_parser("camera-observe", help="Capture and count anonymous people locally")
+    camera_observe.add_argument("--name", default="scene.jpg")
+    camera_observe.add_argument("--device", default=None, help="FFmpeg avfoundation video device")
 
     video = commands.add_parser("video-analyze", help="Extract and index sampled video frames")
     video.add_argument("path")
@@ -145,12 +155,29 @@ def main(argv=None) -> int:
             Voice().speak(args.text)
         elif args.command in {"screen-capture", "camera-capture"}:
             capture = MediaCapture(config.resolved_data_dir / "media")
-            path = capture.screen(args.name) if args.command == "screen-capture" else capture.camera(args.name)
+            path = (
+                capture.screen(args.name)
+                if args.command == "screen-capture"
+                else capture.camera(args.name, args.device or config.vision.camera_device)
+            )
             agent.memory.add_many(read_file(path))
             print(f"Captured and indexed {path}")
+        elif args.command == "scene-observe":
+            observation = LocalPersonDetector(config).detect(Path(args.path))
+            record_id = save_observation(agent.memory, observation)
+            print(f"{observation.summary} Stored as {record_id}")
+        elif args.command == "camera-observe":
+            capture = MediaCapture(config.resolved_data_dir / "media" / "camera")
+            path = capture.camera(args.name, args.device or config.vision.camera_device)
+            agent.memory.add_many(read_file(path))
+            observation = LocalPersonDetector(config).detect(path)
+            record_id = save_observation(agent.memory, observation)
+            print(f"{observation.summary} Stored as {record_id}")
         elif args.command == "camera-monitor":
             capture = MediaCapture(config.resolved_data_dir / "media" / "camera")
-            paths = monitor_camera(capture, args.interval, args.frames)
+            paths = monitor_camera(
+                capture, args.interval, args.frames, args.device or config.vision.camera_device
+            )
             chunks = sum(agent.memory.add_many(read_file(path)) for path in paths)
             print(f"Captured {len(paths)} frames and indexed {chunks} new chunks")
         elif args.command == "video-analyze":

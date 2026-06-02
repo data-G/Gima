@@ -33,5 +33,12 @@
     "profile_name": "Gima",
     "profile_about": "",
     "profile_sources": []
+  },
+  "vision": {
+    "camera_id": "webcam",
+    "camera_device": "0",
+    "detect_people_on_wake": false,
+    "detector_command": [],
+    "minimum_confidence": 0.5
   }
 }

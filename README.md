@@ -43,6 +43,7 @@ CSV memory is stored under `.human-ai/csv/`. The SQLite file
 | Voice input | Adapter-ready | `whisper.cpp` |
 | Screen capture | macOS `screencapture` | Periodic event detector |
 | Camera capture | Adapter-ready | `imagesnap` or FFmpeg |
+| Anonymous people count | Local detector adapter | Small COCO-compatible detector |
 | Bounded camera monitor | Adapter-ready | `imagesnap` or FFmpeg |
 | Video frame sampling | Adapter-ready | FFmpeg |
 | Audio and video transcription | Adapter-ready | `whisper.cpp` |
@@ -83,6 +84,8 @@ available:
 python3 -m human_ai.cli screen-capture
 python3 -m human_ai.cli camera-capture
 python3 -m human_ai.cli camera-monitor --frames 12 --interval 5
+python3 -m human_ai.cli camera-observe --device 0
+python3 -m human_ai.cli scene-observe /path/to/frame.jpg
 python3 -m human_ai.cli video-analyze recording.mp4 --seconds 10
 python3 -m human_ai.cli transcribe recording.wav --model /path/to/ggml-base.en.bin
 ```
@@ -90,6 +93,43 @@ python3 -m human_ai.cli transcribe recording.wav --model /path/to/ggml-base.en.b
 The monitor is deliberately bounded. Continuous background observation should
 be added later with visible recording status, retention rules, and an event
 detector that discards unchanged frames.
+
+### Multiple People And Cameras
+
+The vision adapter supports zero, one, or many visible people. It stores
+anonymous scene events such as `4 people are visible near front_camera`. It does
+not infer names, search faces on the web, or claim that a detected person is the
+profile owner.
+
+Configure a local COCO-style object detector separately. Its command receives
+the image path in place of `{image}` and must print JSON:
+
+```json
+{
+  "vision": {
+    "camera_id": "front_camera",
+    "camera_device": "0",
+    "detect_people_on_wake": true,
+    "detector_command": ["local-detector", "--image", "{image}", "--json"],
+    "minimum_confidence": 0.5
+  }
+}
+```
+
+Expected detector output:
+
+```json
+{
+  "detections": [
+    {"label": "person", "confidence": 0.91, "box": [10, 20, 100, 220]},
+    {"label": "person", "confidence": 0.86, "box": [140, 18, 250, 225]}
+  ]
+}
+```
+
+Run one process per configured camera when monitoring multiple local or network
+cameras. Keep recording status visible and apply retention rules for saved
+frames.
 
 ## Wake Word
 

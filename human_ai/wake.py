@@ -10,6 +10,7 @@ from typing import List, Optional
 from .config import Config
 from .memory import MemoryStore, Record
 from .readers import read_file
+from .scene import LocalPersonDetector, SceneObservation, save_observation
 from .services import MediaCapture, Voice
 
 
@@ -30,6 +31,7 @@ class WakeResult:
     activated: bool
     message: str
     photo_path: Optional[Path] = None
+    observation: Optional[SceneObservation] = None
 
 
 class WakeAssistant:
@@ -46,13 +48,17 @@ class WakeAssistant:
 
         should_capture = wake.camera_on_wake if capture_photo is None else capture_photo
         photo_path: Optional[Path] = None
+        observation: Optional[SceneObservation] = None
         if should_capture:
             timestamp = datetime.now().astimezone().strftime("%Y%m%d_%H%M%S")
             capture = MediaCapture(self.config.resolved_data_dir / "media" / "wake")
-            photo_path = capture.camera(f"wake_{timestamp}.jpg")
+            photo_path = capture.camera(f"wake_{timestamp}.jpg", self.config.vision.camera_device)
             self.memory.add_many(read_file(photo_path))
+            if self.config.vision.detect_people_on_wake:
+                observation = LocalPersonDetector(self.config).detect(photo_path)
+                save_observation(self.memory, observation)
 
-        message = self._greeting()
+        message = self._greeting(observation)
         if wake.speak_on_wake:
             Voice().speak(message)
         self.memory.audit(
@@ -72,9 +78,9 @@ class WakeAssistant:
                 confidence="1.00",
             )
         )
-        return WakeResult(True, message, photo_path)
+        return WakeResult(True, message, photo_path, observation)
 
-    def _greeting(self) -> str:
+    def _greeting(self, observation: Optional[SceneObservation] = None) -> str:
         profile = self.config.wake
         message = f"Hi {profile.profile_name}."
         if profile.profile_about:
@@ -83,4 +89,6 @@ class WakeAssistant:
             message += " Your local profile does not contain a description yet."
         if profile.profile_sources:
             message += f" Your profile has {len(profile.profile_sources)} approved web source(s)."
+        if observation:
+            message += f" {observation.summary} I do not infer anyone's identity from the image."
         return message
