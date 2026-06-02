@@ -1,0 +1,9 @@
+[project]
+name = "human-ai-local"
+version = "0.1.0"
+description = "Local-first multimodal personal agent foundation"
+requires-python = ">=3.9"
+
+[project.scripts]
+human-ai = "human_ai.cli:main"
+

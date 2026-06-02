@@ -1,0 +1,29 @@
+{
+  "name": "Gima",
+  "workspace": ".",
+  "data_dir": ".human-ai",
+  "model": {
+    "enabled": false,
+    "base_url": "http://127.0.0.1:8080/v1",
+    "model": "local-model",
+    "timeout_seconds": 90
+  },
+  "web": {
+    "allowed_domains": []
+  },
+  "tools": {
+    "enabled": false,
+    "allowed_commands": [
+      "git",
+      "python3",
+      "sqlite3",
+      "mlr",
+      "csvcut",
+      "csvgrep",
+      "ffmpeg",
+      "ffprobe",
+      "tesseract"
+    ]
+  }
+}
+
