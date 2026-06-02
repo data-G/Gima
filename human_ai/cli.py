@@ -17,6 +17,7 @@ from .services import (
     dependency_report,
     monitor_camera,
 )
+from .wake import WakeAssistant
 
 
 def parser() -> argparse.ArgumentParser:
@@ -68,6 +69,23 @@ def parser() -> argparse.ArgumentParser:
     transcribe = commands.add_parser("transcribe", help="Transcribe audio or video with whisper.cpp")
     transcribe.add_argument("path")
     transcribe.add_argument("--model", required=True, help="Path to a whisper.cpp model")
+
+    wake = commands.add_parser("wake", help="Process a transcript for the configured wake word")
+    wake.add_argument("transcript", help="Speech transcript from any language")
+    wake.add_argument(
+        "--capture-photo",
+        action="store_const",
+        const=True,
+        default=None,
+        help="Capture one local camera photo after detecting the wake word",
+    )
+
+    listen = commands.add_parser("wake-listen", help="Listen locally for the wake word in bounded chunks")
+    listen.add_argument("--model", required=True, help="Path to a whisper.cpp model")
+    listen.add_argument("--seconds", type=int, default=4, help="Seconds per microphone chunk")
+    listen.add_argument("--cycles", type=int, default=15, help="Maximum chunks before stopping")
+    listen.add_argument("--device", default=":0", help="FFmpeg avfoundation audio input device")
+    listen.add_argument("--capture-photo", action="store_const", const=True, default=None)
 
     tool = commands.add_parser("tool", help="Run one explicitly allowlisted tool")
     tool.add_argument("tool_args", nargs=argparse.REMAINDER)
@@ -158,6 +176,29 @@ def main(argv=None) -> int:
                 )
             )
             print(f"Stored transcript as {record_id}")
+        elif args.command == "wake":
+            result = WakeAssistant(config, agent.memory).respond(
+                args.transcript, capture_photo=args.capture_photo
+            )
+            print(result.message)
+            if result.photo_path:
+                print(f"Local photo: {result.photo_path}")
+            return 0 if result.activated else 2
+        elif args.command == "wake-listen":
+            analyzer = MediaAnalyzer(config.resolved_data_dir / "media" / "wake_audio")
+            assistant = WakeAssistant(config, agent.memory)
+            for cycle in range(max(1, args.cycles)):
+                source = analyzer.record_microphone(f"wake_{cycle:05d}.wav", args.seconds, args.device)
+                transcript = analyzer.transcribe(source, Path(args.model))
+                print(f"heard> {transcript}")
+                result = assistant.respond(transcript, capture_photo=args.capture_photo)
+                if result.activated:
+                    print(result.message)
+                    if result.photo_path:
+                        print(f"Local photo: {result.photo_path}")
+                    return 0
+            print("Wake word not detected.")
+            return 2
         elif args.command == "tool":
             result = SafeToolRunner(config).run(args.tool_args)
             agent.memory.audit("tool", " ".join(args.tool_args), result.stderr[:500], str(result.returncode))

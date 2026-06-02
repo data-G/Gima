@@ -24,6 +24,14 @@
       "ffprobe",
       "tesseract"
     ]
+  },
+  "wake": {
+    "word": "Gima",
+    "aliases": [],
+    "camera_on_wake": false,
+    "speak_on_wake": true,
+    "profile_name": "Gima",
+    "profile_about": "",
+    "profile_sources": []
   }
 }
-

@@ -46,6 +46,7 @@ CSV memory is stored under `.human-ai/csv/`. The SQLite file
 | Bounded camera monitor | Adapter-ready | `imagesnap` or FFmpeg |
 | Video frame sampling | Adapter-ready | FFmpeg |
 | Audio and video transcription | Adapter-ready | `whisper.cpp` |
+| Multilingual transcript wake word | Yes | Continuous microphone adapter |
 | Web research | Explicit URL import | Configure approved domains |
 | Local reasoning | Retrieval fallback | `llama.cpp` OpenAI-compatible server |
 | Code and shell tools | Disabled by default | Enable allowlisted tools explicitly |
@@ -90,6 +91,40 @@ The monitor is deliberately bounded. Continuous background observation should
 be added later with visible recording status, retention rules, and an event
 detector that discards unchanged frames.
 
+## Wake Word
+
+The `wake` command recognizes the configured word `Gima` inside a Unicode speech
+transcript, greets the enrolled local profile, and optionally captures one local
+photo:
+
+```bash
+python3 -m human_ai.cli wake "こんにちは Gima"
+python3 -m human_ai.cli wake "Hello Gima" --capture-photo
+python3 -m human_ai.cli wake-listen --model /path/to/ggml-base.bin --cycles 15
+```
+
+Photo capture requires `imagesnap` or FFmpeg. It is disabled unless requested
+with `--capture-photo` or enabled in a private configuration file:
+
+```json
+{
+  "wake": {
+    "word": "Gima",
+    "aliases": [],
+    "camera_on_wake": true,
+    "speak_on_wake": true,
+    "profile_name": "Gima",
+    "profile_about": "Add an approved local profile summary here.",
+    "profile_sources": ["https://example.com/approved-profile"]
+  }
+}
+```
+
+The photo remains local. This project does not upload camera images for face
+search or infer a person's identity from an image. Add known profile details and
+approved public URLs explicitly, then use `web-import` when you want to index a
+specific source.
+
 ## Memory Layout
 
 ```text
@@ -125,10 +160,11 @@ Mac with 16 GB RAM.
 
 ## Safety Model
 
-Camera use, screen capture, web imports, and tool execution are explicit
-commands. The foundation does not silently watch the camera, crawl the internet,
-rewrite its own code, delete files, or publish anything. Those behaviors should
-remain visible, permissioned workflows as the system grows.
+Camera use, screen capture, web imports, and tool execution are explicit or
+configured opt-in commands. The foundation does not silently watch the camera,
+crawl the internet, upload biometric images, rewrite its own code, delete files,
+or publish anything. Those behaviors should remain visible, permissioned
+workflows as the system grows.
 
 ## Tests
 

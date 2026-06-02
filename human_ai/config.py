@@ -38,6 +38,17 @@ class ToolConfig:
 
 
 @dataclass
+class WakeConfig:
+    word: str = "Gima"
+    aliases: List[str] = field(default_factory=list)
+    camera_on_wake: bool = False
+    speak_on_wake: bool = True
+    profile_name: str = "Gima"
+    profile_about: str = ""
+    profile_sources: List[str] = field(default_factory=list)
+
+
+@dataclass
 class Config:
     name: str = "Gima"
     workspace: Path = Path(".")
@@ -45,6 +56,7 @@ class Config:
     model: ModelConfig = field(default_factory=ModelConfig)
     web: WebConfig = field(default_factory=WebConfig)
     tools: ToolConfig = field(default_factory=ToolConfig)
+    wake: WakeConfig = field(default_factory=WakeConfig)
 
     @property
     def resolved_workspace(self) -> Path:
@@ -78,4 +90,3 @@ def load_config(path: str | None = None) -> Config:
         raw = json.loads(Path(path).expanduser().read_text(encoding="utf-8"))
         _merge_dataclass(config, raw)
     return config
-

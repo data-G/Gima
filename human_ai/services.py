@@ -185,6 +185,33 @@ class MediaAnalyzer:
         )
         return result.stdout.strip()
 
+    def record_microphone(self, output_name: str, seconds: int = 4, device: str = ":0") -> Path:
+        if not shutil.which("ffmpeg"):
+            raise RuntimeError("Microphone capture requires FFmpeg")
+        target = (self.output_dir / output_name).resolve()
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-f",
+                "avfoundation",
+                "-i",
+                device,
+                "-t",
+                str(max(1, seconds)),
+                "-ar",
+                "16000",
+                "-ac",
+                "1",
+                "-y",
+                str(target),
+            ],
+            check=True,
+        )
+        return target
+
 
 def monitor_camera(capture: MediaCapture, interval_seconds: int, frames: int) -> List[Path]:
     """Capture a bounded sequence. A future detector can discard unchanged frames."""
