@@ -64,6 +64,24 @@ class MemoryStoreTests(unittest.TestCase):
         self.assertEqual(self.store.search("old"), [])
         self.assertEqual(self.store.search("new")[0]["content"], "new wording")
 
+    def test_conversation_is_written_and_searchable(self):
+        self.store.append_conversation("session_1", "user", "Remember the blue umbrella")
+        rows = self.store.search_conversations("umbrella")
+        self.assertEqual(rows[0]["session_id"], "session_1")
+        self.assertEqual(rows[0]["role"], "user")
+
+    def test_old_conversation_csv_schema_is_migrated(self):
+        self.store.conversations_path.write_text(
+            "timestamp,session_id,role,message,category,importance\n"
+            "2026-06-02T10:00:00+09:00,legacy,user,old message,conversation,0.50\n",
+            encoding="utf-8",
+        )
+        self.store.rebuild_index()
+        rows = self.store.search_conversations("old")
+        self.assertEqual(rows[0]["session_id"], "legacy")
+        with self.store.conversations_path.open(newline="", encoding="utf-8") as handle:
+            self.assertEqual(next(csv.reader(handle))[0], "id")
+
 
 if __name__ == "__main__":
     unittest.main()

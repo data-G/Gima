@@ -50,6 +50,11 @@ def parser() -> argparse.ArgumentParser:
     approve = commands.add_parser("memory-approve", help="Promote a reviewed memory record")
     approve.add_argument("record_id")
 
+    history = commands.add_parser("conversation-history", help="Search locally stored conversations")
+    history.add_argument("query", nargs="?", default="")
+    history.add_argument("--session-id")
+    history.add_argument("--limit", type=int, default=50)
+
     speak = commands.add_parser("speak", help="Speak text using the local macOS voice")
     speak.add_argument("text")
 
@@ -151,6 +156,12 @@ def main(argv=None) -> int:
             if not agent.memory.update_status(args.record_id, "active"):
                 raise ValueError(f"Unknown memory record: {args.record_id}")
             print(f"Approved {args.record_id}")
+        elif args.command == "conversation-history":
+            rows = agent.memory.search_conversations(args.query, args.session_id, args.limit)
+            if not rows:
+                print("No matching conversation.")
+            for row in reversed(rows):
+                print(f"{row['timestamp']} [{row['session_id']}] {row['role']}> {row['message']}")
         elif args.command == "speak":
             Voice().speak(args.text)
         elif args.command in {"screen-capture", "camera-capture"}:

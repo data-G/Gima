@@ -29,6 +29,7 @@ RECORD_FIELDS = [
 ]
 
 CONVERSATION_FIELDS = [
+    "id",
     "timestamp",
     "session_id",
     "role",
@@ -96,10 +97,30 @@ class MemoryStore:
 
     @staticmethod
     def _ensure_csv(path: Path, fields: List[str]) -> None:
-        if path.exists():
+        if not path.exists():
+            with path.open("w", newline="", encoding="utf-8") as handle:
+                csv.DictWriter(handle, fieldnames=fields).writeheader()
             return
-        with path.open("w", newline="", encoding="utf-8") as handle:
-            csv.DictWriter(handle, fieldnames=fields).writeheader()
+        with path.open(newline="", encoding="utf-8") as handle:
+            reader = csv.DictReader(handle)
+            if reader.fieldnames == fields:
+                return
+            rows = list(reader)
+        if not set(reader.fieldnames or []).issubset(fields):
+            raise ValueError(f"CSV schema mismatch: {path}")
+        for row in rows:
+            for field in fields:
+                row.setdefault(field, "")
+            if "id" in fields and not row["id"]:
+                row["id"] = f"conv_{uuid.uuid4().hex}"
+        with tempfile.NamedTemporaryFile(
+            "w", newline="", encoding="utf-8", dir=str(path.parent), delete=False
+        ) as handle:
+            writer = csv.DictWriter(handle, fieldnames=fields)
+            writer.writeheader()
+            writer.writerows(rows)
+            temp_path = Path(handle.name)
+        temp_path.replace(path)
 
     def add(self, record: Record) -> str:
         self.initialize()
@@ -167,6 +188,7 @@ class MemoryStore:
     ) -> None:
         self.initialize()
         row = {
+            "id": f"conv_{uuid.uuid4().hex}",
             "timestamp": now_iso(),
             "session_id": session_id,
             "role": role,
@@ -176,6 +198,32 @@ class MemoryStore:
         }
         with self.conversations_path.open("a", newline="", encoding="utf-8") as handle:
             csv.DictWriter(handle, fieldnames=CONVERSATION_FIELDS).writerow(row)
+        self._index_conversation(row)
+
+    def search_conversations(
+        self, query: str = "", session_id: Optional[str] = None, limit: int = 50
+    ) -> List[Dict[str, str]]:
+        self.initialize()
+        tokens = [token for token in query.replace('"', " ").split() if token]
+        with self._connect() as connection:
+            self._create_schema(connection)
+            if tokens:
+                match = " OR ".join(f'"{token}"' for token in tokens[:16])
+                sql = (
+                    "SELECT c.*, bm25(conversations_fts) AS score "
+                    "FROM conversations_fts JOIN conversations c ON c.id = conversations_fts.id "
+                    "WHERE conversations_fts MATCH ? "
+                )
+                params: List[object] = [match]
+            else:
+                sql = "SELECT c.*, 0 AS score FROM conversations c WHERE 1 = 1 "
+                params = []
+            if session_id:
+                sql += "AND c.session_id = ? "
+                params.append(session_id)
+            sql += "ORDER BY score, c.timestamp DESC LIMIT ?"
+            params.append(max(1, min(limit, 500)))
+            return [dict(row) for row in connection.execute(sql, params)]
 
     def audit(self, action: str, target: str, details: str, status: str) -> None:
         self.initialize()
@@ -220,6 +268,20 @@ class MemoryStore:
             CREATE VIRTUAL TABLE IF NOT EXISTS records_fts USING fts5(
                 id UNINDEXED, title, content, keywords, category, subcategory
             );
+            CREATE TABLE IF NOT EXISTS conversations (
+                id TEXT PRIMARY KEY,
+                timestamp TEXT,
+                session_id TEXT,
+                role TEXT,
+                message TEXT,
+                category TEXT,
+                importance TEXT
+            );
+            CREATE INDEX IF NOT EXISTS conversations_session_idx
+                ON conversations(session_id, timestamp);
+            CREATE VIRTUAL TABLE IF NOT EXISTS conversations_fts USING fts5(
+                id UNINDEXED, message, role, category, session_id
+            );
             """
         )
 
@@ -246,9 +308,25 @@ class MemoryStore:
                     ],
                 )
 
+    def _index_conversation(self, row: Dict[str, str]) -> None:
+        with self._connect() as connection:
+            self._create_schema(connection)
+            inserted = connection.execute(
+                f"INSERT OR IGNORE INTO conversations ({','.join(CONVERSATION_FIELDS)}) "
+                f"VALUES ({','.join('?' for _ in CONVERSATION_FIELDS)})",
+                [row[field] for field in CONVERSATION_FIELDS],
+            )
+            if inserted.rowcount:
+                connection.execute(
+                    "INSERT INTO conversations_fts (id, message, role, category, session_id) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    [row["id"], row["message"], row["role"], row["category"], row["session_id"]],
+                )
+
     def rebuild_index(self) -> int:
         self.csv_dir.mkdir(parents=True, exist_ok=True)
         self._ensure_csv(self.knowledge_path, RECORD_FIELDS)
+        self._ensure_csv(self.conversations_path, CONVERSATION_FIELDS)
         if self.db_path.exists():
             self.db_path.unlink()
         count = 0
@@ -275,6 +353,21 @@ class MemoryStore:
                         ],
                     )
                     count += 1
+            if self.conversations_path.exists():
+                with self.conversations_path.open(newline="", encoding="utf-8") as handle:
+                    for row in csv.DictReader(handle):
+                        if not row.get("id"):
+                            row["id"] = f"conv_{uuid.uuid4().hex}"
+                        connection.execute(
+                            f"INSERT OR REPLACE INTO conversations ({','.join(CONVERSATION_FIELDS)}) "
+                            f"VALUES ({','.join('?' for _ in CONVERSATION_FIELDS)})",
+                            [row[field] for field in CONVERSATION_FIELDS],
+                        )
+                        connection.execute(
+                            "INSERT INTO conversations_fts (id, message, role, category, session_id) "
+                            "VALUES (?, ?, ?, ?, ?)",
+                            [row["id"], row["message"], row["role"], row["category"], row["session_id"]],
+                        )
         return count
 
     def search(

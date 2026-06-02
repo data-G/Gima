@@ -22,12 +22,22 @@ python3 -m human_ai.cli doctor
 python3 -m human_ai.cli ingest README.md
 python3 -m human_ai.cli search "multimodal memory"
 python3 -m human_ai.cli chat "What do you remember about this project?"
+python3 -m human_ai.cli conversation-history "project"
 python3 -m human_ai.cli speak "Local speech is working"
 ```
 
 CSV memory is stored under `.human-ai/csv/`. The SQLite file
 `.human-ai/index.sqlite3` is only a generated search cache. Delete it and run
 `python3 -m human_ai.cli rebuild` at any time.
+
+Typed chat, wake transcripts, and assistant wake responses are appended to
+`.human-ai/csv/conversations.csv`. Search recent conversation history locally:
+
+```bash
+python3 -m human_ai.cli conversation-history
+python3 -m human_ai.cli conversation-history "umbrella"
+python3 -m human_ai.cli conversation-history --session-id SESSION_ID
+```
 
 ## Capabilities
 

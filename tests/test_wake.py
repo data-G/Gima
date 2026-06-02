@@ -38,6 +38,16 @@ class WakeWordTests(unittest.TestCase):
             result = WakeAssistant(config, memory).respond("hello")
         self.assertFalse(result.activated)
 
+    @patch("human_ai.wake.Voice.speak")
+    def test_wake_logs_transcript_and_response_as_conversation(self, speak):
+        with tempfile.TemporaryDirectory() as temp:
+            config = Config(data_dir=Path(temp))
+            memory = MemoryStore(config.resolved_data_dir)
+            assistant = WakeAssistant(config, memory)
+            assistant.respond("Hello Gima")
+            rows = memory.search_conversations("Gima")
+        self.assertEqual({row["role"] for row in rows}, {"user", "assistant"})
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -40,9 +41,11 @@ class WakeAssistant:
     def __init__(self, config: Config, memory: MemoryStore):
         self.config = config
         self.memory = memory
+        self.session_id = f"wake_{uuid.uuid4().hex}"
 
     def respond(self, transcript: str, capture_photo: Optional[bool] = None) -> WakeResult:
         wake = self.config.wake
+        self.memory.append_conversation(self.session_id, "user", transcript, category="voice")
         if not contains_wake_word(transcript, wake.word, wake.aliases):
             return WakeResult(False, "Wake word not detected.")
 
@@ -61,6 +64,7 @@ class WakeAssistant:
         message = self._greeting(observation)
         if wake.speak_on_wake:
             Voice().speak(message)
+        self.memory.append_conversation(self.session_id, "assistant", message, category="voice")
         self.memory.audit(
             "wake",
             wake.word,
