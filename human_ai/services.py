@@ -120,8 +120,12 @@ class MediaCapture:
     def camera(self, output_name: str = "camera.jpg", device: str = "0") -> Path:
         target = (self.output_dir / output_name).resolve()
         if shutil.which("imagesnap"):
-            subprocess.run(["imagesnap", "-w", "1", str(target)], check=True)
-            return target
+            try:
+                subprocess.run(["imagesnap", "-w", "1", str(target)], check=True, timeout=20)
+                return target
+            except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+                if target.exists():
+                    target.unlink()
         if shutil.which("ffmpeg"):
             subprocess.run(
                 [
@@ -133,6 +137,8 @@ class MediaCapture:
                     "avfoundation",
                     "-framerate",
                     "1",
+                    "-pixel_format",
+                    "nv12",
                     "-i",
                     device,
                     "-frames:v",
@@ -140,6 +146,7 @@ class MediaCapture:
                     str(target),
                 ],
                 check=True,
+                timeout=20,
             )
             return target
         raise RuntimeError("Camera capture requires imagesnap or FFmpeg")
@@ -179,7 +186,18 @@ class MediaAnalyzer:
         if not executable:
             raise RuntimeError("Transcription requires whisper.cpp's whisper-cli")
         result = subprocess.run(
-            [executable, "-m", str(model_path.expanduser()), "-f", str(source.expanduser())],
+            [
+                executable,
+                "--no-gpu",
+                "--language",
+                "auto",
+                "--no-timestamps",
+                "--no-prints",
+                "-m",
+                str(model_path.expanduser()),
+                "-f",
+                str(source.expanduser()),
+            ],
             capture_output=True,
             text=True,
             check=True,
@@ -211,6 +229,7 @@ class MediaAnalyzer:
                 str(target),
             ],
             check=True,
+            timeout=max(20, seconds + 15),
         )
         return target
 
