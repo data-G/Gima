@@ -7,6 +7,7 @@ from pathlib import Path
 
 from .agent import Agent
 from .config import load_config
+from .daily_summary import DailySummaryService
 from .memory import Record
 from .permissions import ALLOWED_SCOPES, PermissionManager
 from .readers import read_file
@@ -35,6 +36,13 @@ def parser() -> argparse.ArgumentParser:
     permission_grant.add_argument("--minutes", type=int, default=10)
     commands.add_parser("permission-status", help="Show the current scoped permission session")
     commands.add_parser("permission-revoke", help="End the current scoped permission session")
+
+    daily_summary = commands.add_parser("daily-summary", help="Package a local daily source snapshot")
+    daily_summary.add_argument("--since", default="midnight", help="Git --since value")
+
+    daily_email = commands.add_parser("daily-summary-email", help="Send the source snapshot using Apple Mail")
+    daily_email.add_argument("--to", required=True)
+    daily_email.add_argument("--since", default="midnight", help="Git --since value")
 
     ingest = commands.add_parser("ingest", help="Index a file or folder")
     ingest.add_argument("path")
@@ -163,6 +171,15 @@ def main(argv=None) -> int:
         elif args.command == "permission-revoke":
             permissions.revoke()
             print("Permission session revoked.")
+        elif args.command in {"daily-summary", "daily-summary-email"}:
+            service = DailySummaryService(
+                config.resolved_workspace, config.resolved_data_dir, agent.memory
+            )
+            summary = service.generate(args.since)
+            print(f"Packaged {summary.file_count} tracked files: {summary.attachment_path}")
+            if args.command == "daily-summary-email":
+                service.send_with_apple_mail(args.to, summary)
+                print(f"Sent daily summary to {args.to}")
         elif args.command == "ingest":
             permissions.require("files")
             print(f"Indexed {agent.ingest(Path(args.path))} new chunks")

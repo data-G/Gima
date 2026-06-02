@@ -106,6 +106,21 @@ The terminal asks for an exact confirmation. Available scopes are `camera`,
 stored only under `.human-ai/`, and are recorded in the local audit CSV. The
 default maximum lifetime is 30 minutes.
 
+## Daily Source Summary
+
+Create a local source-code attachment and Git summary:
+
+```bash
+python3 -m human_ai.cli daily-summary
+python3 -m human_ai.cli daily-summary-email --to gimkan@gmail.com
+```
+
+The ZIP contains every Git-tracked program file plus a summary of commits and
+uncommitted changes since midnight. Private runtime data under `.human-ai/`,
+including conversation history and camera media, is excluded. Email delivery
+uses the macOS Mail app and its configured account; the program does not store
+an email password.
+
 ## Media Commands
 
 Media processing activates automatically when the corresponding native tool is
