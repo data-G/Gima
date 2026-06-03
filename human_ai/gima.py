@@ -4,6 +4,8 @@ import argparse
 import getpass
 import json
 import os
+import plistlib
+import subprocess
 import sys
 from pathlib import Path
 
@@ -90,9 +92,32 @@ def parser() -> argparse.ArgumentParser:
     transfer.add_argument("prompt", nargs="+")
     transfer.add_argument(
         "--provider",
-        choices=["chatgpt", "openai", "gemini", "both"],
+        choices=["local", "chatgpt", "openai", "gemini", "both", "all"],
         default="both",
     )
+
+    commands.add_parser("ai-list", help="List AI providers Gima can use")
+
+    daily_learn = commands.add_parser("daily-learn", help="Learn from available AI providers for a bounded time")
+    daily_learn.add_argument("--minutes", type=float, default=60)
+    daily_learn.add_argument("--provider", action="append", choices=["local", "chatgpt", "openai", "gemini", "all"])
+    daily_learn.add_argument("--topic", help="Override the configured daily learning topic rotation")
+    daily_learn.add_argument("--pause-seconds", type=int, default=None)
+    daily_learn.add_argument("--rounds", type=int, default=None, help="Limit rounds, useful for testing")
+    daily_learn.add_argument(
+        "--scheduled",
+        action="store_true",
+        help="Run from an installed daily schedule created by schedule-daily-learning",
+    )
+
+    schedule = commands.add_parser("schedule-daily-learning", help="Run Gima daily learning every day with launchd")
+    schedule.add_argument("--hour", type=int, default=2)
+    schedule.add_argument("--minute", type=int, default=0)
+    schedule.add_argument("--minutes", type=float, default=60)
+    schedule.add_argument("--provider", action="append", choices=["local", "chatgpt", "openai", "gemini", "all"])
+    schedule.add_argument("--topic")
+    schedule.add_argument("--pause-seconds", type=int, default=None)
+    schedule.add_argument("--no-load", action="store_true", help="Write the plist but do not load it now")
 
     commands.add_parser("doctor", help="Show optional local capabilities")
     return root
@@ -162,6 +187,72 @@ def _print_status(agent: Agent, brain: BrainServer, config_path: str | None) -> 
     if models:
         print(f"Model: {models[0].get('id', '[unknown]')}")
     print(f"Missing optional tools: {', '.join(missing) if missing else 'none'}")
+
+
+def _teacher_providers(value: list[str] | None) -> list[str] | None:
+    if not value:
+        return None
+    providers: list[str] = []
+    for provider in value:
+        if provider == "all":
+            return None
+        providers.append("chatgpt" if provider == "openai" else provider)
+    return providers
+
+
+def _print_ai_providers(agent: Agent) -> None:
+    print("AI providers available to Gima:")
+    for row in agent.list_ai_providers():
+        marker = "ready" if row["available"] == "yes" else "missing"
+        print(f"- {row['provider']}: {row['name']} [{marker}] {row['detail']}")
+
+
+def _schedule_daily_learning(args, config_path: str | None, config) -> Path:
+    launch_dir = Path.home() / "Library" / "LaunchAgents"
+    launch_dir.mkdir(parents=True, exist_ok=True)
+    label = "com.gima.daily-ai-learning"
+    plist_path = launch_dir / f"{label}.plist"
+    log_dir = config.resolved_data_dir / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    command: list[str] = [
+        "python3",
+        "-m",
+        "human_ai.gima",
+    ]
+    if config_path:
+        command.extend(["--config", str(Path(config_path).expanduser().resolve())])
+    command.extend(["daily-learn", "--minutes", str(args.minutes), "--scheduled"])
+    for provider in args.provider or []:
+        command.extend(["--provider", provider])
+    if args.topic:
+        command.extend(["--topic", args.topic])
+    if args.pause_seconds is not None:
+        command.extend(["--pause-seconds", str(args.pause_seconds)])
+    shell_command = (
+        "source /etc/zprofile 2>/dev/null || true; "
+        "source ~/.zprofile 2>/dev/null || true; "
+        "source ~/.zshrc 2>/dev/null || true; "
+        f"cd {str(config.resolved_workspace)!r} && "
+        + " ".join(_shell_quote(part) for part in command)
+    )
+    plist = {
+        "Label": label,
+        "ProgramArguments": ["/bin/zsh", "-lc", shell_command],
+        "StartCalendarInterval": {"Hour": args.hour, "Minute": args.minute},
+        "StandardOutPath": str(log_dir / "daily_ai_learning.out.log"),
+        "StandardErrorPath": str(log_dir / "daily_ai_learning.err.log"),
+        "WorkingDirectory": str(config.resolved_workspace),
+    }
+    with plist_path.open("wb") as handle:
+        plistlib.dump(plist, handle)
+    if not args.no_load:
+        subprocess.run(["launchctl", "unload", "-w", str(plist_path)], check=False, capture_output=True)
+        subprocess.run(["launchctl", "load", "-w", str(plist_path)], check=True)
+    return plist_path
+
+
+def _shell_quote(value: str) -> str:
+    return "'" + value.replace("'", "'\\''") + "'"
 
 
 def main(argv=None) -> int:
@@ -243,12 +334,34 @@ def main(argv=None) -> int:
             print(answer)
         elif args.command == "transfer-knowledge":
             permissions.require("web")
-            providers = ["chatgpt", "gemini"] if args.provider == "both" else [args.provider]
+            providers = ["chatgpt", "gemini"] if args.provider == "both" else (_teacher_providers([args.provider]) or ["local", "chatgpt", "gemini"])
             results = agent.transfer_teacher_knowledge(" ".join(args.prompt), providers)
             for provider, answer in results:
                 print(f"## {provider}")
                 print(answer)
                 print()
+        elif args.command == "ai-list":
+            _print_ai_providers(agent)
+        elif args.command == "daily-learn":
+            if not args.scheduled:
+                permissions.require("web")
+            providers = _teacher_providers(args.provider)
+            results = agent.daily_teacher_learning(
+                minutes=args.minutes,
+                providers=providers,
+                topic=args.topic,
+                pause_seconds=args.pause_seconds,
+                max_rounds=args.rounds,
+            )
+            for provider, topic, answer in results:
+                print(f"## {provider} | {topic}")
+                print(answer[:1200])
+                print()
+            print(f"Daily learning saved {len(results)} result(s).")
+        elif args.command == "schedule-daily-learning":
+            path = _schedule_daily_learning(args, args.config, config)
+            status = "installed" if not args.no_load else "written"
+            print(f"Daily AI learning schedule {status}: {path}")
     except Exception as error:
         print(f"error: {error}", file=sys.stderr)
         return 1

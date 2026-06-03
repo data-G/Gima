@@ -122,6 +122,30 @@ Teacher answers are saved as `teacher/chatgpt` or `teacher/gemini` review memory
 and appear in `.human-ai/csv/source_reviews.csv` for parent approval. In voice
 mode, say `ask ChatGPT ...` or `ask Gemini ...`.
 
+List all AI providers configured in Gima:
+
+```bash
+python3 -m human_ai.gima ai-list
+```
+
+Run one bounded daily learning session from the available providers:
+
+```bash
+printf 'GRANT WEB\n' | python3 -m human_ai.cli --config config.local.json permission-grant --scope web --minutes 10
+python3 -m human_ai.gima daily-learn --minutes 60
+```
+
+Install the daily macOS schedule:
+
+```bash
+python3 -m human_ai.gima schedule-daily-learning --hour 2 --minute 0 --minutes 60 --provider all
+```
+
+The schedule uses LaunchAgent `com.gima.daily-ai-learning` and writes logs under
+`.human-ai/logs/`. It loads API keys from your shell files, so keep
+`OPENAI_API_KEY` and `GEMINI_API_KEY` in `~/.zprofile` or `~/.zshrc` if you want
+scheduled ChatGPT/Gemini learning to run unattended.
+
 CSV memory is stored under `.human-ai/csv/`. The SQLite file
 `.human-ai/index.sqlite3` is only a generated search cache. Delete it and run
 `python3 -m human_ai.cli rebuild` at any time.

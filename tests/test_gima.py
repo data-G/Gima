@@ -113,6 +113,53 @@ class GimaControlCenterTests(unittest.TestCase):
         self.assertIn("## gemini", output)
         transfer.assert_called_once_with("improve Gima", ["chatgpt", "gemini"])
 
+    def test_ai_list_prints_configured_providers(self):
+        output = self.run_gima("ai-list")
+        self.assertIn("local", output)
+        self.assertIn("chatgpt", output)
+        self.assertIn("gemini", output)
+
+    def test_daily_learn_uses_selected_provider(self):
+        with patch("human_ai.agent.Agent.daily_teacher_learning") as daily:
+            daily.return_value = [("chatgpt", "memory", "lesson")]
+            output = self.run_gima(
+                "daily-learn",
+                "--minutes",
+                "0",
+                "--provider",
+                "chatgpt",
+                "--topic",
+                "memory",
+                "--rounds",
+                "1",
+            )
+        self.assertIn("Daily learning saved 1 result", output)
+        daily.assert_called_once_with(
+            minutes=0.0,
+            providers=["chatgpt"],
+            topic="memory",
+            pause_seconds=None,
+            max_rounds=1,
+        )
+
+    def test_schedule_daily_learning_writes_launch_agent(self):
+        with patch("human_ai.gima.Path.home", return_value=Path(self.temp.name)):
+            output = self.run_gima(
+                "schedule-daily-learning",
+                "--hour",
+                "3",
+                "--minute",
+                "15",
+                "--minutes",
+                "60",
+                "--provider",
+                "all",
+                "--no-load",
+            )
+        self.assertIn("daily-ai-learning", output)
+        plist = Path(self.temp.name) / "Library" / "LaunchAgents" / "com.gima.daily-ai-learning.plist"
+        self.assertTrue(plist.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

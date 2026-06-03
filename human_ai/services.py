@@ -176,6 +176,14 @@ class TeacherModelClient:
     def __init__(self, config: Config):
         self.config = config.teacher_models
 
+    def available(self, provider: str) -> bool:
+        provider = provider.casefold().strip()
+        if provider in {"chatgpt", "openai"}:
+            return bool(os.environ.get("OPENAI_API_KEY", ""))
+        if provider == "gemini":
+            return bool(os.environ.get("GEMINI_API_KEY", ""))
+        return False
+
     def ask(self, provider: str, prompt: str) -> str:
         provider = provider.casefold().strip()
         if provider in {"chatgpt", "openai"}:

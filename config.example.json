@@ -62,5 +62,15 @@
     "openai_model": "gpt-4o-mini",
     "gemini_model": "gemini-2.5-flash",
     "timeout_seconds": 120
+  },
+  "daily_learning": {
+    "topics": [
+      "human-like conversation for a local personal AI",
+      "long-term memory, retrieval, and source review for personal assistants",
+      "safe tool use, permissions, and user control for AI agents",
+      "multimodal camera, voice, and screen interaction design",
+      "evaluation methods for improving a local AI assistant"
+    ],
+    "pause_seconds": 60
   }
 }

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import uuid
+import time
 from pathlib import Path
-from typing import List, Tuple
+from typing import Dict, List, Tuple
 
 from .config import Config
 from .memory import MemoryStore, Record
@@ -244,8 +245,30 @@ class Agent:
         return target
 
     def ask_teacher(self, provider: str, prompt: str) -> str:
-        answer = self.teacher_models.ask(provider, prompt)
-        provider_name = "chatgpt" if provider.casefold() in {"chatgpt", "openai"} else "gemini"
+        provider_name = self._canonical_ai_provider(provider)
+        if provider_name == "local":
+            answer = self._ask_local_teacher(prompt)
+        else:
+            answer = self.teacher_models.ask(provider_name, prompt)
+        return self._store_teacher_answer(provider_name, prompt, answer)
+
+    def _ask_local_teacher(self, prompt: str) -> str:
+        if not self.config.model.enabled:
+            raise RuntimeError("Local brain model is not enabled in the configuration")
+        return self.model.complete(
+            [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are Gima's local brain. Give one concise, practical lesson "
+                        "that can improve Gima as a local personal AI assistant."
+                    ),
+                },
+                {"role": "user", "content": prompt},
+            ]
+        )
+
+    def _store_teacher_answer(self, provider_name: str, prompt: str, answer: str) -> str:
         record = Record(
             category="teacher",
             subcategory=provider_name,
@@ -270,12 +293,89 @@ class Agent:
         self.memory.audit("teacher_ask", provider_name, f"Stored as {record_id}", "ok")
         return answer
 
+    def _canonical_ai_provider(self, provider: str) -> str:
+        key = provider.casefold().strip()
+        if key in {"chatgpt", "openai"}:
+            return "chatgpt"
+        if key in {"gemini", "google"}:
+            return "gemini"
+        if key in {"local", "local-brain", "brain", "gima"}:
+            return "local"
+        raise ValueError("Provider must be local, chatgpt, openai, or gemini")
+
+    def list_ai_providers(self) -> List[Dict[str, str]]:
+        return [
+            {
+                "provider": "local",
+                "name": "Gima local brain",
+                "available": "yes" if self.config.model.enabled else "no",
+                "detail": self.config.model.model if self.config.model.enabled else "model.enabled is false",
+            },
+            {
+                "provider": "chatgpt",
+                "name": "ChatGPT / OpenAI",
+                "available": "yes" if self.teacher_models.available("chatgpt") else "no",
+                "detail": self.config.teacher_models.openai_model,
+            },
+            {
+                "provider": "gemini",
+                "name": "Google Gemini",
+                "available": "yes" if self.teacher_models.available("gemini") else "no",
+                "detail": self.config.teacher_models.gemini_model,
+            },
+        ]
+
     def transfer_teacher_knowledge(self, prompt: str, providers: List[str]) -> List[Tuple[str, str]]:
         results: List[Tuple[str, str]] = []
         for provider in providers:
             answer = self.ask_teacher(provider, prompt)
             results.append((provider, answer))
         return results
+
+    def daily_teacher_learning(
+        self,
+        minutes: float = 60,
+        providers: List[str] | None = None,
+        topic: str | None = None,
+        pause_seconds: int | None = None,
+        max_rounds: int | None = None,
+    ) -> List[Tuple[str, str, str]]:
+        duration_seconds = max(0.0, minutes) * 60
+        deadline = time.monotonic() + duration_seconds
+        pause = self.config.daily_learning.pause_seconds if pause_seconds is None else pause_seconds
+        provider_names = providers or [
+            row["provider"] for row in self.list_ai_providers() if row["available"] == "yes"
+        ]
+        if not provider_names:
+            raise RuntimeError("No AI providers are available. Start the local brain or set OPENAI_API_KEY/GEMINI_API_KEY.")
+        topics = [topic] if topic else list(self.config.daily_learning.topics)
+        if not topics:
+            topics = ["how Gima can improve as a local personal AI assistant"]
+        results: List[Tuple[str, str, str]] = []
+        round_number = 0
+        while True:
+            round_number += 1
+            current_topic = topics[(round_number - 1) % len(topics)]
+            for provider in provider_names:
+                if duration_seconds and time.monotonic() > deadline:
+                    return results
+                prompt = (
+                    f"Daily Gima learning round {round_number}. Topic: {current_topic}. "
+                    "Give practical, source-aware lessons Gima can save for review. "
+                    "Prefer concrete design improvements, risks, and tests."
+                )
+                try:
+                    answer = self.ask_teacher(provider, prompt)
+                    results.append((self._canonical_ai_provider(provider), current_topic, answer))
+                except Exception as error:
+                    provider_name = provider.casefold().strip()
+                    self.memory.audit("daily_teacher_learning", provider_name, str(error), "error")
+                    results.append((provider_name, current_topic, f"error: {error}"))
+            if max_rounds and round_number >= max_rounds:
+                return results
+            if not duration_seconds or time.monotonic() >= deadline:
+                return results
+            time.sleep(max(0, min(pause, int(deadline - time.monotonic()))))
 
     def search(self, query: str, category: str | None = None, limit: int = 8):
         return self.memory.search(query, category=category, limit=limit)

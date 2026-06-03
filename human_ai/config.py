@@ -86,6 +86,20 @@ class TeacherModelsConfig:
 
 
 @dataclass
+class DailyLearningConfig:
+    topics: List[str] = field(
+        default_factory=lambda: [
+            "human-like conversation for a local personal AI",
+            "long-term memory, retrieval, and source review for personal assistants",
+            "safe tool use, permissions, and user control for AI agents",
+            "multimodal camera, voice, and screen interaction design",
+            "evaluation methods for improving a local AI assistant",
+        ]
+    )
+    pause_seconds: int = 60
+
+
+@dataclass
 class Config:
     name: str = "Gima"
     workspace: Path = Path(".")
@@ -98,6 +112,7 @@ class Config:
     permissions: PermissionConfig = field(default_factory=PermissionConfig)
     parent_approval: ParentApprovalConfig = field(default_factory=ParentApprovalConfig)
     teacher_models: TeacherModelsConfig = field(default_factory=TeacherModelsConfig)
+    daily_learning: DailyLearningConfig = field(default_factory=DailyLearningConfig)
 
     @property
     def resolved_workspace(self) -> Path:
