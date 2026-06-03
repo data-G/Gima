@@ -57,7 +57,7 @@ class GimaControlCenterTests(unittest.TestCase):
 
     def test_learn_language_saves_knowledge_file(self):
         with patch("human_ai.agent.Agent.learn_language") as learn_language:
-            learn_language.return_value = Path(self.temp.name) / ".human-ai" / "knowledge" / "sinhala.md"
+            learn_language.return_value = Path(self.temp.name) / ".human-ai" / "brain" / "sinhala.md"
             output = self.run_gima("learn-language", "sinhala")
         self.assertIn("sinhala.md", output)
         learn_language.assert_called_once_with("sinhala")

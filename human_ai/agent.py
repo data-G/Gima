@@ -95,9 +95,9 @@ class Agent:
                 ]
             )
             source_lines.append(url)
-        knowledge_dir = self.config.resolved_data_dir / "knowledge"
-        knowledge_dir.mkdir(parents=True, exist_ok=True)
-        target = knowledge_dir / str(profile["file"])
+        brain_dir = self.config.resolved_data_dir / "brain"
+        brain_dir.mkdir(parents=True, exist_ok=True)
+        target = brain_dir / str(profile["file"])
         target.write_text("\n".join(sections), encoding="utf-8")
         self.memory.replace_source(
             str(target),

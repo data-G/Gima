@@ -77,7 +77,7 @@ python3 -m human_ai.gima search "Sinhala alphabet"
 ```
 
 In voice mode, say `learn Sinhala`. Gima saves the gathered knowledge to
-`.human-ai/knowledge/sinhala.md` and indexes it as `language/sinhala` memory.
+`.human-ai/brain/sinhala.md` and indexes it as `language/sinhala` memory.
 
 CSV memory is stored under `.human-ai/csv/`. The SQLite file
 `.human-ai/index.sqlite3` is only a generated search cache. Delete it and run
@@ -340,6 +340,8 @@ Kill phrase: say `End Game`. In normal mode that stops the process. In
 
 ```text
 .human-ai/
+  brain/
+    sinhala.md
   csv/
     knowledge.csv
     conversations.csv
