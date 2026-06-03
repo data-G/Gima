@@ -118,9 +118,10 @@ python3 -m human_ai.gima teacher gemini "How should Gima interact with camera ob
 python3 -m human_ai.gima transfer-knowledge "Give Gima five design lessons for safer personal AI assistants"
 ```
 
-Teacher answers are saved as `teacher/chatgpt` or `teacher/gemini` review memory
-and appear in `.human-ai/csv/source_reviews.csv` for parent approval. In voice
-mode, say `ask ChatGPT ...` or `ask Gemini ...`.
+Teacher answers are saved as `teacher/chatgpt` or `teacher/gemini` review memory,
+appended to `.human-ai/brain/teacher-learnings/<provider>.md`, and listed in
+`.human-ai/csv/source_reviews.csv` for parent approval. In voice mode, say
+`ask ChatGPT ...` or `ask Gemini ...`.
 
 List all AI providers configured in Gima:
 
@@ -141,7 +142,8 @@ Install the daily macOS schedule:
 python3 -m human_ai.gima schedule-daily-learning --hour 2 --minute 0 --minutes 60 --provider all
 ```
 
-The schedule uses LaunchAgent `com.gima.daily-ai-learning` and writes logs under
+The schedule uses LaunchAgent `com.gima.daily-ai-learning`, appends each learned
+lesson to `.human-ai/brain/teacher-learnings/`, and writes logs under
 `.human-ai/logs/`. It loads API keys from your shell files, so keep
 `OPENAI_API_KEY` and `GEMINI_API_KEY` in `~/.zprofile` or `~/.zshrc` if you want
 scheduled ChatGPT/Gemini learning to run unattended.

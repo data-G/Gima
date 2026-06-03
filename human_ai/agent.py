@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Dict, List, Tuple
 
 from .config import Config
-from .memory import MemoryStore, Record
+from .memory import MemoryStore, Record, now_iso
 from .readers import iter_files, read_file
 from .services import LocalModel, TeacherModelClient, WebImporter
 
@@ -269,14 +269,15 @@ class Agent:
         )
 
     def _store_teacher_answer(self, provider_name: str, prompt: str, answer: str) -> str:
+        brain_path = self._append_teacher_brain_file(provider_name, prompt, answer)
         record = Record(
             category="teacher",
             subcategory=provider_name,
             kind="teacher_answer",
             title=f"{provider_name} answer: {prompt[:80]}",
             content=answer,
-            keywords=f"{provider_name} teacher model transfer knowledge",
-            source=f"teacher:{provider_name}",
+            keywords=f"{provider_name} teacher model transfer knowledge brain learning",
+            source=str(brain_path),
             confidence="0.50",
             status="review",
         )
@@ -290,8 +291,44 @@ class Agent:
             answer[:1000],
             internet_status="teacher_model",
         )
-        self.memory.audit("teacher_ask", provider_name, f"Stored as {record_id}", "ok")
+        self.memory.audit("teacher_ask", provider_name, f"Stored as {record_id}; brain={brain_path}", "ok")
         return answer
+
+    def _append_teacher_brain_file(self, provider_name: str, prompt: str, answer: str) -> Path:
+        brain_dir = self.config.resolved_data_dir / "brain" / "teacher-learnings"
+        brain_dir.mkdir(parents=True, exist_ok=True)
+        target = brain_dir / f"{provider_name}.md"
+        if not target.exists():
+            target.write_text(
+                "\n".join(
+                    [
+                        f"# {provider_name.title()} Teacher Learnings",
+                        "",
+                        "Append-only lessons saved by Gima. Review before treating as trusted knowledge.",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+        entry = "\n".join(
+            [
+                f"## {now_iso()}",
+                "",
+                f"Provider: {provider_name}",
+                "",
+                "Prompt:",
+                "",
+                prompt,
+                "",
+                "Answer:",
+                "",
+                answer,
+                "",
+            ]
+        )
+        with target.open("a", encoding="utf-8") as handle:
+            handle.write(entry)
+        return target
 
     def _canonical_ai_provider(self, provider: str) -> str:
         key = provider.casefold().strip()

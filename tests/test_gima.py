@@ -105,6 +105,22 @@ class GimaControlCenterTests(unittest.TestCase):
         self.assertIn("teacher answer", output)
         ask.assert_called_once_with("chatgpt", "teach Gima")
 
+    def test_teacher_answer_is_saved_to_brain_file(self):
+        from human_ai.agent import Agent
+        from human_ai.config import load_config
+
+        agent = Agent(load_config(str(self.config_path)))
+        answer = agent._store_teacher_answer("chatgpt", "teach memory", "lesson body")
+
+        self.assertEqual(answer, "lesson body")
+        brain_file = Path(self.temp.name) / ".human-ai" / "brain" / "teacher-learnings" / "chatgpt.md"
+        self.assertTrue(brain_file.exists())
+        text = brain_file.read_text(encoding="utf-8")
+        self.assertIn("teach memory", text)
+        self.assertIn("lesson body", text)
+        reviews = agent.memory.list_source_reviews("pending", 5)
+        self.assertEqual(str(brain_file.resolve()), reviews[0]["source"])
+
     def test_transfer_knowledge_uses_both_teachers(self):
         with patch("human_ai.agent.Agent.transfer_teacher_knowledge") as transfer:
             transfer.return_value = [("chatgpt", "a"), ("gemini", "b")]
