@@ -268,6 +268,13 @@ printf 'GRANT MICROPHONE,CAMERA\\n' | python3 -m human_ai.cli permission-grant -
 python3 -m human_ai.cli assistant-run --model ~/.local/share/gima/models/ggml-tiny.bin --cycles 20 --conversation-turns 20
 ```
 
+To skip wake-word detection and start talking immediately:
+
+```bash
+printf 'GRANT MICROPHONE\\n' | python3 -m human_ai.cli --config config.local.json permission-grant --scope microphone --minutes 10
+python3 -m human_ai.cli --config config.local.json assistant-chat --model ~/.local/share/gima/models/ggml-tiny.bin --conversation-turns 20
+```
+
 For a visible 24/7-style loop, run:
 
 ```bash

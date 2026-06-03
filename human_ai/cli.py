@@ -132,6 +132,12 @@ def parser() -> argparse.ArgumentParser:
     assistant.add_argument("--device", default=":0", help="FFmpeg avfoundation audio input device")
     assistant.add_argument("--capture-photo", action="store_const", const=True, default=None)
 
+    assistant_chat = commands.add_parser("assistant-chat", help="Start direct voice conversation now")
+    assistant_chat.add_argument("--model", required=True, help="Path to a whisper.cpp model")
+    assistant_chat.add_argument("--command-seconds", type=int, default=8)
+    assistant_chat.add_argument("--conversation-turns", type=int, default=20)
+    assistant_chat.add_argument("--device", default=":0", help="FFmpeg avfoundation audio input device")
+
     assistant_command = commands.add_parser("assistant-command", help="Run one typed assistant command")
     assistant_command.add_argument("text")
 
@@ -320,6 +326,13 @@ def main(argv=None) -> int:
                 forever=args.forever,
                 device=args.device,
                 capture_photo=args.capture_photo,
+            )
+        elif args.command == "assistant-chat":
+            return LocalAssistant(agent).run_conversation(
+                Path(args.model),
+                command_seconds=args.command_seconds,
+                conversation_turns=args.conversation_turns,
+                device=args.device,
             )
         elif args.command == "assistant-command":
             reply = LocalAssistant(agent).run_text_command(args.text)

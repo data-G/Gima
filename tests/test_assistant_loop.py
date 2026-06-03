@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from human_ai.agent import Agent
 from human_ai.assistant_loop import LocalAssistant
@@ -44,6 +45,18 @@ class LocalAssistantTests(unittest.TestCase):
         )
         reply = assistant.run_text_command("search memory umbrella")
         self.assertIn("Blue umbrella", reply.message)
+
+    def test_direct_conversation_stops_on_end_game(self):
+        assistant = self.make_assistant()
+        assistant.config.permissions.require_scoped_grants = False
+        with patch.object(assistant, "listen_once", return_value="End Game"), patch.object(
+            assistant.voice, "speak"
+        ) as speak:
+            self.assertEqual(
+                assistant.run_conversation(Path("/tmp/whisper.bin"), conversation_turns=3),
+                0,
+            )
+        self.assertGreaterEqual(speak.call_count, 2)
 
 
 if __name__ == "__main__":

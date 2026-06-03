@@ -104,6 +104,50 @@ class LocalAssistant:
         self.terminal_event("TRANSCRIPT", transcript or "[empty]")
         return transcript
 
+    def answer_voice_command(self, command: str) -> AssistantReply:
+        self.terminal_event("HEARD COMMAND", command or "[empty]")
+        self.agent.memory.append_conversation(
+            self.agent.session_id, "user", command, category="voice_command"
+        )
+        reply = self.run_text_command(command)
+        self.agent.memory.append_conversation(
+            self.agent.session_id, "assistant", reply.message, category="voice_command"
+        )
+        self.terminal_event("REPLY", f"{reply.action}: {reply.message}")
+        self.terminal_event("SPEAKING", reply.message)
+        self.voice.speak(reply.message)
+        return reply
+
+    def run_conversation(
+        self,
+        model: Path,
+        command_seconds: int = 8,
+        conversation_turns: int = 20,
+        device: str = ":0",
+    ) -> int:
+        self.permissions.require("microphone")
+        self.terminal_event(
+            "START",
+            f"direct voice chat, end='{self.config.wake.end_phrase}', turns={conversation_turns}",
+        )
+        analyzer = MediaAnalyzer(self.config.resolved_data_dir / "media" / "assistant_audio")
+        self.terminal_event("SPEAKING", "I am listening. Say End Game to stop.")
+        self.voice.speak("I am listening. Say End Game to stop.")
+        for turn in range(max(1, conversation_turns)):
+            self.terminal_event("LISTENING FOR COMMAND", f"turn={turn + 1}/{conversation_turns}")
+            try:
+                command = self.listen_once(analyzer, model, command_seconds, device, "direct")
+            except Exception as error:
+                self.terminal_event("AUDIO WARNING", str(error))
+                continue
+            reply = self.answer_voice_command(command)
+            if reply.action == "stop":
+                self.terminal_event("STOP", "End phrase received")
+                return 0
+        self.terminal_event("STOP", "conversation turn limit reached")
+        self.voice.speak("Conversation window ended.")
+        return 0
+
     def run_after_wake(
         self,
         model: Path,
@@ -166,17 +210,7 @@ class LocalAssistant:
                     except Exception as error:
                         command = ""
                         self.terminal_event("AUDIO WARNING", str(error))
-                    self.terminal_event("HEARD COMMAND", command or "[empty]")
-                    self.agent.memory.append_conversation(
-                        self.agent.session_id, "user", command, category="voice_command"
-                    )
-                    reply = self.run_text_command(command)
-                    self.agent.memory.append_conversation(
-                        self.agent.session_id, "assistant", reply.message, category="voice_command"
-                    )
-                    self.terminal_event("REPLY", f"{reply.action}: {reply.message}")
-                    self.terminal_event("SPEAKING", reply.message)
-                    self.voice.speak(reply.message)
+                    reply = self.answer_voice_command(command)
                     if reply.action == "stop":
                         if forever:
                             self.terminal_event("SESSION ENDED", "returning to wake listening")
