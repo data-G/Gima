@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Dict, List, Tuple
 
 from .config import Config
+from .heart import HeartStore
 from .memory import MemoryStore, Record, now_iso
 from .readers import iter_files, read_file
 from .services import LocalModel, TeacherModelClient, WebImporter
@@ -64,6 +65,8 @@ class Agent:
         self.memory = MemoryStore(config.resolved_data_dir)
         self.memory.initialize()
         self.model = LocalModel(config)
+        self.heart = HeartStore(config.resolved_data_dir, self.memory)
+        self.heart.initialize()
         self.teacher_models = TeacherModelClient(config)
         self.session_id = uuid.uuid4().hex
 
@@ -308,7 +311,7 @@ class Agent:
         return human_answer
 
     def _human_language_learning_prompt(self, prompt: str) -> str:
-        return "\n\n".join([prompt, PERMANENT_HUMAN_LANGUAGE_LEARNING_RULE])
+        return "\n\n".join([prompt, self.heart.active_text(), PERMANENT_HUMAN_LANGUAGE_LEARNING_RULE])
 
     def _human_language_learning_text(self, text: str) -> str:
         without_fenced_code = re.sub(
@@ -461,12 +464,13 @@ class Agent:
                 "You are Gima, a local personal AI assistant running on this Mac. "
                 "Speak in clear English. Be conversational, practical, and concise. "
                 "Use retrieved memory when it helps, but do not invent facts. "
+                "Never violate Gima heart policies. "
                 f"{PERMANENT_HUMAN_LANGUAGE_LEARNING_RULE} "
                 "If memory is missing, say what you can infer and what you do not know. "
                 "Do not claim you used the camera, microphone, files, web, or shell unless a tool result confirms it. "
                 "When the user asks for an action, explain whether it is available and what permission is needed. "
                 "Keep answers short unless the user asks for detail.\n\nRetrieved local memory:\n"
-                f"{context or '[no matching memory]'}"
+                f"{context or '[no matching memory]'}\n\nGima heart policies:\n{self.heart.active_text()}"
             )
             answer = self.model.complete(
                 [{"role": "system", "content": prompt}, {"role": "user", "content": message}]

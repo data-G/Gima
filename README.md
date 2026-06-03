@@ -107,6 +107,37 @@ for approving learned knowledge, not for unlimited machine access.
 For scripts, set `GIMA_PARENT_PASSWORD` in the environment instead of typing at
 the prompt.
 
+## Heart Policies
+
+Gima stores non-violable policies in `.human-ai/heart/`. Active policies are
+written to `.human-ai/heart/active_policies.md`, and the review ledger is
+`.human-ai/heart/policies.csv`.
+
+Heart access is parent-password gated. Policy candidates are reviewed one at a
+time; approve to add a rule to Gima's heart, or skip to keep it out.
+
+```bash
+python3 -m human_ai.gima heart-sources
+python3 -m human_ai.gima heart-list --status active
+python3 -m human_ai.gima heart-next
+python3 -m human_ai.gima heart-review
+python3 -m human_ai.gima heart-approve openai-human-review-safeguards --notes "good for Gima"
+python3 -m human_ai.gima heart-skip ibm-trust-transparency-human-augmentation --notes "not for now"
+```
+
+For scripts:
+
+```bash
+export GIMA_PARENT_PASSWORD="..."
+python3 -m human_ai.gima heart-review
+```
+
+Initial external policy candidates are summarized from public AI safety sources:
+OpenAI safety best practices and Preparedness Framework, Anthropic Responsible
+Scaling Policy, Google AI Principles, Microsoft Responsible AI principles, and
+IBM AI ethics/trust guidance. These summaries are pending until the parent user
+approves them.
+
 Teacher model knowledge transfer:
 
 ```bash

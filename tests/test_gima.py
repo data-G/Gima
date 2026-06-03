@@ -207,6 +207,60 @@ class GimaControlCenterTests(unittest.TestCase):
         plist = Path(self.temp.name) / "Library" / "LaunchAgents" / "com.gima.daily-ai-learning.plist"
         self.assertTrue(plist.exists())
 
+    def test_heart_list_requires_parent_password(self):
+        output = io.StringIO()
+        with redirect_stdout(output):
+            code = gima.main(
+                [
+                    "--config",
+                    str(self.config_path),
+                    "heart-list",
+                    "--password",
+                    "wrong",
+                ]
+            )
+        self.assertEqual(code, 1)
+
+    def test_heart_sources_are_parent_gated(self):
+        output = self.run_gima("heart-sources", "--password", "parent-pass")
+        self.assertIn("OpenAI", output)
+        self.assertIn("Anthropic", output)
+        self.assertIn("Google", output)
+        self.assertIn("Microsoft", output)
+        self.assertIn("IBM", output)
+
+    def test_heart_approve_writes_active_policy(self):
+        output = self.run_gima(
+            "heart-approve",
+            "openai-human-review-safeguards",
+            "--password",
+            "parent-pass",
+            "--notes",
+            "good rule",
+        )
+        self.assertIn("Approved openai-human-review-safeguards", output)
+        active = Path(self.temp.name) / ".human-ai" / "heart" / "active_policies.md"
+        text = active.read_text(encoding="utf-8")
+        self.assertIn("Human Review And Safeguards", text)
+        self.assertIn("OpenAI", text)
+
+    def test_heart_skip_keeps_policy_out_of_active_file(self):
+        output = self.run_gima(
+            "heart-skip",
+            "ibm-trust-transparency-human-augmentation",
+            "--password",
+            "parent-pass",
+        )
+        self.assertIn("Skipped ibm-trust-transparency-human-augmentation", output)
+        active = Path(self.temp.name) / ".human-ai" / "heart" / "active_policies.md"
+        text = active.read_text(encoding="utf-8")
+        self.assertNotIn("Trust, Transparency, And Human Augmentation", text)
+
+    def test_heart_review_handles_one_at_a_time(self):
+        with patch("builtins.input", side_effect=["yes", "stop"]):
+            output = self.run_gima("heart-review", "--password", "parent-pass")
+        self.assertIn("Approved openai-human-review-safeguards", output)
+
 
 if __name__ == "__main__":
     unittest.main()

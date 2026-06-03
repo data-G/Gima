@@ -119,6 +119,29 @@ def parser() -> argparse.ArgumentParser:
     schedule.add_argument("--pause-seconds", type=int, default=None)
     schedule.add_argument("--no-load", action="store_true", help="Write the plist but do not load it now")
 
+    heart_sources = commands.add_parser("heart-sources", help="List external AI policy systems Gima can review")
+    heart_sources.add_argument("--password", help="Parent password. Prefer GIMA_PARENT_PASSWORD for scripts.")
+
+    heart = commands.add_parser("heart-list", help="List Gima heart policies")
+    heart.add_argument("--status", choices=["active", "pending", "skipped", "all"], default="active")
+    heart.add_argument("--password", help="Parent password. Prefer GIMA_PARENT_PASSWORD for scripts.")
+
+    heart_next = commands.add_parser("heart-next", help="Show the next pending heart policy")
+    heart_next.add_argument("--password", help="Parent password. Prefer GIMA_PARENT_PASSWORD for scripts.")
+
+    heart_approve = commands.add_parser("heart-approve", help="Approve one pending heart policy")
+    heart_approve.add_argument("policy_id")
+    heart_approve.add_argument("--notes", default="")
+    heart_approve.add_argument("--password", help="Parent password. Prefer GIMA_PARENT_PASSWORD for scripts.")
+
+    heart_skip = commands.add_parser("heart-skip", help="Skip one pending heart policy")
+    heart_skip.add_argument("policy_id")
+    heart_skip.add_argument("--notes", default="")
+    heart_skip.add_argument("--password", help="Parent password. Prefer GIMA_PARENT_PASSWORD for scripts.")
+
+    heart_review = commands.add_parser("heart-review", help="Approve or skip pending heart policies one at a time")
+    heart_review.add_argument("--password", help="Parent password. Prefer GIMA_PARENT_PASSWORD for scripts.")
+
     commands.add_parser("doctor", help="Show optional local capabilities")
     return root
 
@@ -170,6 +193,67 @@ def _parent_decision(agent: Agent, permissions: PermissionManager, review_id: st
         print(f"Unknown review id: {review_id}", file=sys.stderr)
         return 1
     print(f"{decision.title()} {review_id} as {reviewer}")
+    return 0
+
+
+def _require_parent(agent: Agent, permissions: PermissionManager, password: str | None = None) -> str:
+    parent_password = password or os.environ.get("GIMA_PARENT_PASSWORD") or getpass.getpass(
+        "Parent approval password: "
+    )
+    if not permissions.verify_parent_password(parent_password):
+        raise PermissionError("Parent approval password did not match")
+    return agent.config.parent_approval.reviewer_name
+
+
+def _print_heart_rows(rows) -> None:
+    if not rows:
+        print("No matching heart policies.")
+        return
+    for row in rows:
+        print(f"[{row['id']}] {row['status']} - {row['source_system']} - {row['title']}")
+        print(row["policy"])
+        print(f"source: {row['source_url']}")
+        if row.get("notes"):
+            print(f"notes: {row['notes']}")
+        print()
+
+
+def _print_heart_sources(agent: Agent) -> None:
+    seen: set[str] = set()
+    for row in agent.heart.list_policies():
+        key = row["source_system"]
+        if key in seen or key == "Gima":
+            continue
+        seen.add(key)
+        print(f"- {row['source_system']}: {row['source_url']}")
+
+
+def _heart_decision(agent: Agent, reviewer: str, policy_id: str, status: str, notes: str) -> int:
+    if not agent.heart.decide(policy_id, status, reviewer, notes):
+        print(f"Unknown heart policy id: {policy_id}", file=sys.stderr)
+        return 1
+    print(f"{'Approved' if status == 'active' else 'Skipped'} {policy_id}")
+    print(f"Heart policies saved to {agent.heart.active_path}")
+    return 0
+
+
+def _heart_review(agent: Agent, reviewer: str) -> int:
+    pending = agent.heart.pending()
+    if not pending:
+        print("No pending heart policies.")
+        return 0
+    for row in pending:
+        _print_heart_rows([row])
+        decision = input("Approve this policy? [yes/no/stop]: ").strip().casefold()
+        if decision in {"stop", "s", "quit", "exit"}:
+            break
+        if decision in {"yes", "y", "approve", "a"}:
+            agent.heart.decide(row["id"], "active", reviewer, "interactive approval")
+            print(f"Approved {row['id']}")
+        else:
+            agent.heart.decide(row["id"], "skipped", reviewer, "interactive skip")
+            print(f"Skipped {row['id']}")
+    print(f"Heart policies saved to {agent.heart.active_path}")
     return 0
 
 
@@ -362,6 +446,25 @@ def main(argv=None) -> int:
             path = _schedule_daily_learning(args, args.config, config)
             status = "installed" if not args.no_load else "written"
             print(f"Daily AI learning schedule {status}: {path}")
+        elif args.command == "heart-sources":
+            _require_parent(agent, permissions, args.password)
+            _print_heart_sources(agent)
+        elif args.command == "heart-list":
+            _require_parent(agent, permissions, args.password)
+            status = None if args.status == "all" else args.status
+            _print_heart_rows(agent.heart.list_policies(status))
+        elif args.command == "heart-next":
+            _require_parent(agent, permissions, args.password)
+            _print_heart_rows(agent.heart.pending()[:1])
+        elif args.command == "heart-approve":
+            reviewer = _require_parent(agent, permissions, args.password)
+            return _heart_decision(agent, reviewer, args.policy_id, "active", args.notes)
+        elif args.command == "heart-skip":
+            reviewer = _require_parent(agent, permissions, args.password)
+            return _heart_decision(agent, reviewer, args.policy_id, "skipped", args.notes)
+        elif args.command == "heart-review":
+            reviewer = _require_parent(agent, permissions, args.password)
+            return _heart_review(agent, reviewer)
     except Exception as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
