@@ -187,6 +187,8 @@ photo:
 python3 -m human_ai.cli wake "こんにちは Gima"
 python3 -m human_ai.cli wake "Hello Gima" --capture-photo
 python3 -m human_ai.cli wake-listen --model /path/to/ggml-base.bin --cycles 15
+python3 -m human_ai.cli assistant-run --model ~/.local/share/gima/models/ggml-tiny.bin
+python3 -m human_ai.cli assistant-command "what time is it"
 ```
 
 Photo capture requires `imagesnap` or FFmpeg. It is disabled unless requested
@@ -210,6 +212,21 @@ The photo remains local. This project does not upload camera images for face
 search or infer a person's identity from an image. Add known profile details and
 approved public URLs explicitly, then use `web-import` when you want to index a
 specific source.
+
+## Voice Assistant
+
+`assistant-run` waits for the wake word, says it is listening, records one spoken
+command, answers through the Mac speaker, logs the exchange, and performs only
+bounded local actions. Supported built-in actions include time/status answers,
+camera photo, screenshot, daily summary creation, and local memory search.
+Actions still require active scoped permissions.
+
+Example:
+
+```bash
+printf 'GRANT MICROPHONE,CAMERA\\n' | python3 -m human_ai.cli permission-grant --scope microphone --scope camera --minutes 10
+python3 -m human_ai.cli assistant-run --model ~/.local/share/gima/models/ggml-tiny.bin --cycles 20
+```
 
 ## Memory Layout
 

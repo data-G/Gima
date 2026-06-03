@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 from .agent import Agent
+from .assistant_loop import LocalAssistant
 from .config import load_config
 from .daily_summary import DailySummaryService
 from .memory import Record
@@ -116,6 +117,17 @@ def parser() -> argparse.ArgumentParser:
     listen.add_argument("--cycles", type=int, default=15, help="Maximum chunks before stopping")
     listen.add_argument("--device", default=":0", help="FFmpeg avfoundation audio input device")
     listen.add_argument("--capture-photo", action="store_const", const=True, default=None)
+
+    assistant = commands.add_parser("assistant-run", help="Wake, listen for one command, answer aloud, and act safely")
+    assistant.add_argument("--model", required=True, help="Path to a whisper.cpp model")
+    assistant.add_argument("--wake-seconds", type=int, default=4)
+    assistant.add_argument("--command-seconds", type=int, default=6)
+    assistant.add_argument("--cycles", type=int, default=20)
+    assistant.add_argument("--device", default=":0", help="FFmpeg avfoundation audio input device")
+    assistant.add_argument("--capture-photo", action="store_const", const=True, default=None)
+
+    assistant_command = commands.add_parser("assistant-command", help="Run one typed assistant command")
+    assistant_command.add_argument("text")
 
     tool = commands.add_parser("tool", help="Run one explicitly allowlisted tool")
     tool.add_argument("tool_args", nargs=argparse.REMAINDER)
@@ -284,6 +296,23 @@ def main(argv=None) -> int:
                     return 0
             print("Wake word not detected.")
             return 2
+        elif args.command == "assistant-run":
+            return LocalAssistant(agent).run_after_wake(
+                Path(args.model),
+                wake_seconds=args.wake_seconds,
+                command_seconds=args.command_seconds,
+                cycles=args.cycles,
+                device=args.device,
+                capture_photo=args.capture_photo,
+            )
+        elif args.command == "assistant-command":
+            reply = LocalAssistant(agent).run_text_command(args.text)
+            agent.memory.append_conversation(agent.session_id, "user", args.text, category="assistant_command")
+            agent.memory.append_conversation(
+                agent.session_id, "assistant", reply.message, category="assistant_command"
+            )
+            print(reply.message)
+            Voice().speak(reply.message)
         elif args.command == "tool":
             result = SafeToolRunner(config, agent.memory).run(args.tool_args)
             agent.memory.audit("tool", " ".join(args.tool_args), result.stderr[:500], str(result.returncode))
