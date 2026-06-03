@@ -28,6 +28,35 @@ python3 -m human_ai.cli conversation-history "project"
 python3 -m human_ai.cli speak "Local speech is working"
 ```
 
+## Gima Control Center
+
+Use the short `gima` command after installing the package, or run it immediately
+from this folder with `python3 -m human_ai.gima`.
+
+```bash
+python3 -m human_ai.gima status
+python3 -m human_ai.gima start
+python3 -m human_ai.gima talk "Hello Gima"
+python3 -m human_ai.gima remember "My goal" "Build Gima into my number one personal AI"
+python3 -m human_ai.gima search "personal AI"
+python3 -m human_ai.gima stop
+```
+
+Direct voice conversation:
+
+```bash
+printf 'GRANT MICROPHONE\n' | python3 -m human_ai.cli --config config.local.json permission-grant --scope microphone --minutes 10
+python3 -m human_ai.gima talk --voice --turns 20
+```
+
+To learn from local files or approved public URLs:
+
+```bash
+printf 'GRANT FILES\n' | python3 -m human_ai.cli --config config.local.json permission-grant --scope files --minutes 10
+python3 -m human_ai.gima learn README.md
+python3 -m human_ai.gima search "wake word"
+```
+
 CSV memory is stored under `.human-ai/csv/`. The SQLite file
 `.human-ai/index.sqlite3` is only a generated search cache. Delete it and run
 `python3 -m human_ai.cli rebuild` at any time.
