@@ -38,6 +38,21 @@ class _TextExtractor(HTMLParser):
             self.parts.append(data.strip())
 
 
+class _SearchResultExtractor(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.links: List[str] = []
+
+    def handle_starttag(self, tag: str, attrs: List[tuple]) -> None:
+        if tag != "a":
+            return
+        values = dict(attrs)
+        href = values.get("href", "")
+        css_class = values.get("class", "")
+        if "result__a" in css_class and href:
+            self.links.append(href)
+
+
 def _is_public_host(hostname: str) -> bool:
     try:
         addresses = socket.getaddrinfo(hostname, None)
@@ -75,6 +90,64 @@ class WebImporter:
             parser.feed(text)
             text = "\n".join(parser.parts)
         return html.unescape(text).strip()
+
+    def search(self, query: str, limit: int = 5) -> List[str]:
+        urls = self._duckduckgo_search(query, limit)
+        if not urls:
+            urls = self._wikipedia_search(query, limit)
+        return urls[:limit]
+
+    def _duckduckgo_search(self, query: str, limit: int) -> List[str]:
+        encoded = urllib.parse.urlencode({"q": query})
+        url = f"https://duckduckgo.com/html/?{encoded}"
+        request = urllib.request.Request(url, headers={"User-Agent": "human-ai-local/0.1"})
+        try:
+            with urllib.request.urlopen(request, timeout=20) as response:
+                raw = response.read(1_000_000)
+        except Exception:
+            return []
+        text = raw.decode("utf-8", errors="replace")
+        if "anomaly-modal" in text or "Unfortunately, bots use DuckDuckGo too" in text:
+            return []
+        parser = _SearchResultExtractor()
+        parser.feed(text)
+        urls: List[str] = []
+        for href in parser.links:
+            parsed = urllib.parse.urlparse(html.unescape(href))
+            if parsed.path == "/l/":
+                target = urllib.parse.parse_qs(parsed.query).get("uddg", [""])[0]
+            else:
+                target = urllib.parse.urljoin(url, href)
+            target = target.strip()
+            if target.startswith(("http://", "https://")) and target not in urls:
+                urls.append(target)
+            if len(urls) >= limit:
+                break
+        return urls
+
+    def _wikipedia_search(self, query: str, limit: int) -> List[str]:
+        params = urllib.parse.urlencode(
+            {
+                "action": "opensearch",
+                "search": query,
+                "limit": str(limit),
+                "namespace": "0",
+                "format": "json",
+            }
+        )
+        url = f"https://en.wikipedia.org/w/api.php?{params}"
+        request = urllib.request.Request(
+            url,
+            headers={"User-Agent": "human-ai-local/0.1 (local personal assistant)"},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=20) as response:
+                body = json.loads(response.read().decode("utf-8"))
+        except Exception:
+            return []
+        if not isinstance(body, list) or len(body) < 4:
+            return []
+        return [url for url in body[3] if isinstance(url, str) and url.startswith("https://")]
 
 
 class LocalModel:

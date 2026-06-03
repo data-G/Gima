@@ -57,6 +57,17 @@ python3 -m human_ai.gima learn README.md
 python3 -m human_ai.gima search "wake word"
 ```
 
+To learn from internet search results:
+
+```bash
+printf 'GRANT WEB\n' | python3 -m human_ai.cli --config config.local.json permission-grant --scope web --minutes 10
+python3 -m human_ai.gima learn-web "local LLM memory systems"
+python3 -m human_ai.gima search "local LLM memory"
+```
+
+In voice mode, say `learn from internet about local LLM memory systems`, or say
+`learn from internet` followed by a direct public URL.
+
 CSV memory is stored under `.human-ai/csv/`. The SQLite file
 `.human-ai/index.sqlite3` is only a generated search cache. Delete it and run
 `python3 -m human_ai.cli rebuild` at any time.

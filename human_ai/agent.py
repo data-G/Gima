@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from pathlib import Path
-from typing import List
+from typing import List, Tuple
 
 from .config import Config
 from .memory import MemoryStore, Record
@@ -45,6 +45,17 @@ class Agent:
         record_id = self.memory.add(record)
         self.memory.audit("web_import", url, f"Stored as {record_id} for review", "ok")
         return record_id
+
+    def learn_web(self, query: str, category: str = "research", limit: int = 3) -> List[Tuple[str, str]]:
+        importer = WebImporter(self.config.web.allowed_domains)
+        imported: List[Tuple[str, str]] = []
+        for url in importer.search(query, limit=limit):
+            try:
+                imported.append((url, self.import_web(url, category)))
+            except Exception as error:
+                self.memory.audit("web_learn", url, str(error), "error")
+        self.memory.audit("web_learn", query, f"Imported {len(imported)} pages", "ok")
+        return imported
 
     def search(self, query: str, category: str | None = None, limit: int = 8):
         return self.memory.search(query, category=category, limit=limit)

@@ -7,6 +7,7 @@ from typing import Optional
 import uuid
 import time
 import os
+import re
 
 from .agent import Agent
 from .daily_summary import DailySummaryService
@@ -74,6 +75,33 @@ class LocalAssistant:
                 self.agent.memory,
             ).generate()
             return AssistantReply(f"I created the daily source summary attachment at {summary.attachment_path}.")
+        if self._is_web_learn_request(normalized):
+            self.permissions.require("web")
+            url = self._first_url(text)
+            if url:
+                self.terminal_event("ACTION", f"web import: {url}")
+                record_id = self.agent.import_web(url, "research")
+                return AssistantReply(
+                    f"I imported that web page into memory for review as {record_id}.",
+                    "web_learn",
+                )
+            query = self._web_learn_query(text)
+            if not query:
+                return AssistantReply(
+                    "Yes, I can learn from the internet. Say a topic, like learn from internet about local LLMs, or give me a URL.",
+                    "web_learn",
+                )
+            self.terminal_event("ACTION", f"web learn: {query}")
+            imported = self.agent.learn_web(query, "research", limit=3)
+            if not imported:
+                return AssistantReply(
+                    "I searched the web but could not import a public page. Try giving me a direct URL.",
+                    "web_learn",
+                )
+            return AssistantReply(
+                f"I imported {len(imported)} internet pages about {query} into memory for review.",
+                "web_learn",
+            )
         if normalized.startswith("remember ") or normalized.startswith("search memory "):
             query = normalized.replace("search memory ", "", 1).replace("remember ", "", 1)
             self.terminal_event("ACTION", f"memory search: {query}")
@@ -84,6 +112,37 @@ class LocalAssistant:
             return AssistantReply(f"I found these local memories: {titles}.")
         self.terminal_event("ACTION", "chat fallback")
         return AssistantReply(self.agent.chat(text), "chat")
+
+    def _is_web_learn_request(self, normalized: str) -> bool:
+        return any(
+            phrase in normalized
+            for phrase in {
+                "learn from internet",
+                "learn from the internet",
+                "learn from web",
+                "learn from the web",
+                "search internet",
+                "search the internet",
+                "import web",
+                "web import",
+                "can't you learn",
+                "can you learn",
+            }
+        )
+
+    def _first_url(self, text: str) -> str:
+        match = re.search(r"https?://[^\s]+", text)
+        return match.group(0).rstrip(".,)") if match else ""
+
+    def _web_learn_query(self, text: str) -> str:
+        cleaned = re.sub(r"https?://[^\s]+", "", text, flags=re.IGNORECASE)
+        cleaned = re.sub(
+            r"\b(please|can't you|can you|could you|cannot you|you|gima|learn from the internet|learn from internet|learn from the web|learn from web|search the internet|search internet|import web|web import|learn|about|for)\b",
+            " ",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+        return " ".join(cleaned.strip(" ?.!,;:").split())
 
     def is_end_phrase(self, text: str) -> bool:
         spoken = normalize_speech(text)

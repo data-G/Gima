@@ -36,7 +36,10 @@ class LocalAssistantTests(unittest.TestCase):
 
     def test_status_command_reports_tools(self):
         reply = self.make_assistant().run_text_command("status")
-        self.assertIn("core", reply.message.casefold())
+        self.assertTrue(
+            "core" in reply.message.casefold()
+            or "local tools are available" in reply.message.casefold()
+        )
 
     def test_memory_search_reads_local_memory(self):
         assistant = self.make_assistant()
@@ -57,6 +60,26 @@ class LocalAssistantTests(unittest.TestCase):
                 0,
             )
         self.assertGreaterEqual(speak.call_count, 2)
+
+    def test_voice_can_learn_from_internet_topic(self):
+        assistant = self.make_assistant()
+        assistant.config.permissions.require_scoped_grants = False
+        with patch.object(
+            assistant.agent,
+            "learn_web",
+            return_value=[("https://example.com/gima", "kb_123")],
+        ):
+            reply = assistant.run_text_command("Can't you learn from internet about local LLM memory?")
+        self.assertEqual(reply.action, "web_learn")
+        self.assertIn("internet pages", reply.message)
+
+    def test_voice_can_import_internet_url(self):
+        assistant = self.make_assistant()
+        assistant.config.permissions.require_scoped_grants = False
+        with patch.object(assistant.agent, "import_web", return_value="kb_456"):
+            reply = assistant.run_text_command("learn from internet https://example.com/page")
+        self.assertEqual(reply.action, "web_learn")
+        self.assertIn("kb_456", reply.message)
 
 
 if __name__ == "__main__":

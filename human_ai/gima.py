@@ -52,6 +52,11 @@ def parser() -> argparse.ArgumentParser:
     learn.add_argument("source")
     learn.add_argument("--category", default="research")
 
+    learn_web = commands.add_parser("learn-web", help="Search the internet and import top public pages")
+    learn_web.add_argument("query")
+    learn_web.add_argument("--category", default="research")
+    learn_web.add_argument("--limit", type=int, default=3)
+
     search = commands.add_parser("search", help="Search Gima memory")
     search.add_argument("query")
     search.add_argument("--category")
@@ -151,6 +156,13 @@ def main(argv=None) -> int:
             else:
                 permissions.require("files")
                 print(f"Indexed {agent.ingest(Path(source))} new chunks")
+        elif args.command == "learn-web":
+            permissions.require("web")
+            imported = agent.learn_web(args.query, args.category, args.limit)
+            if not imported:
+                print("No public pages were imported. Try a direct URL with gima learn.")
+            for url, record_id in imported:
+                print(f"Imported {url} as {record_id}")
         elif args.command == "search":
             _print_rows(agent.search(args.query, args.category, args.limit))
     except Exception as error:

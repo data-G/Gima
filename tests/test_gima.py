@@ -48,6 +48,13 @@ class GimaControlCenterTests(unittest.TestCase):
         self.assertIn("Gima config:", output)
         self.assertIn("Brain: stopped", output)
 
+    def test_learn_web_imports_search_results(self):
+        with patch("human_ai.agent.Agent.learn_web") as learn_web:
+            learn_web.return_value = [("https://example.com/source", "kb_web")]
+            output = self.run_gima("learn-web", "local LLM memory")
+        self.assertIn("Imported https://example.com/source as kb_web", output)
+        learn_web.assert_called_once_with("local LLM memory", "research", 3)
+
 
 if __name__ == "__main__":
     unittest.main()

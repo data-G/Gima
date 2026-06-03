@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from human_ai.config import Config
 from human_ai.memory import MemoryStore
@@ -27,6 +28,16 @@ class ServiceSafetyTests(unittest.TestCase):
             memory = MemoryStore(config.resolved_data_dir)
             with self.assertRaises(PermissionError):
                 SafeToolRunner(config, memory).run(["rm", "-rf", "something"])
+
+    def test_web_search_falls_back_to_wikipedia(self):
+        importer = WebImporter([])
+        with patch.object(importer, "_duckduckgo_search", return_value=[]), patch.object(
+            importer, "_wikipedia_search", return_value=["https://en.wikipedia.org/wiki/Large_language_model"]
+        ):
+            self.assertEqual(
+                importer.search("large language model", limit=1),
+                ["https://en.wikipedia.org/wiki/Large_language_model"],
+            )
 
 
 if __name__ == "__main__":
