@@ -7,7 +7,7 @@ from typing import List, Tuple
 from .config import Config
 from .memory import MemoryStore, Record
 from .readers import iter_files, read_file
-from .services import LocalModel, WebImporter
+from .services import LocalModel, TeacherModelClient, WebImporter
 
 
 LANGUAGE_LEARNING_SOURCES = {
@@ -53,6 +53,7 @@ class Agent:
         self.memory = MemoryStore(config.resolved_data_dir)
         self.memory.initialize()
         self.model = LocalModel(config)
+        self.teacher_models = TeacherModelClient(config)
         self.session_id = uuid.uuid4().hex
 
     def ingest(self, path: Path) -> int:
@@ -241,6 +242,40 @@ class Agent:
             "ok",
         )
         return target
+
+    def ask_teacher(self, provider: str, prompt: str) -> str:
+        answer = self.teacher_models.ask(provider, prompt)
+        provider_name = "chatgpt" if provider.casefold() in {"chatgpt", "openai"} else "gemini"
+        record = Record(
+            category="teacher",
+            subcategory=provider_name,
+            kind="teacher_answer",
+            title=f"{provider_name} answer: {prompt[:80]}",
+            content=answer,
+            keywords=f"{provider_name} teacher model transfer knowledge",
+            source=f"teacher:{provider_name}",
+            confidence="0.50",
+            status="review",
+        )
+        record_id = self.memory.add(record)
+        self.memory.add_source_review(
+            record_id,
+            record.title,
+            record.source,
+            record.category,
+            record.subcategory,
+            answer[:1000],
+            internet_status="teacher_model",
+        )
+        self.memory.audit("teacher_ask", provider_name, f"Stored as {record_id}", "ok")
+        return answer
+
+    def transfer_teacher_knowledge(self, prompt: str, providers: List[str]) -> List[Tuple[str, str]]:
+        results: List[Tuple[str, str]] = []
+        for provider in providers:
+            answer = self.ask_teacher(provider, prompt)
+            results.append((provider, answer))
+        return results
 
     def search(self, query: str, category: str | None = None, limit: int = 8):
         return self.memory.search(query, category=category, limit=limit)

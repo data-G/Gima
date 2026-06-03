@@ -57,5 +57,10 @@
   "parent_approval": {
     "reviewer_name": "Gima parent",
     "password_sha256": ""
+  },
+  "teacher_models": {
+    "openai_model": "gpt-4o-mini",
+    "gemini_model": "gemini-2.5-flash",
+    "timeout_seconds": 120
   }
 }

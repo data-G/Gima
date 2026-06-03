@@ -79,6 +79,13 @@ class ParentApprovalConfig:
 
 
 @dataclass
+class TeacherModelsConfig:
+    openai_model: str = "gpt-4o-mini"
+    gemini_model: str = "gemini-2.5-flash"
+    timeout_seconds: int = 120
+
+
+@dataclass
 class Config:
     name: str = "Gima"
     workspace: Path = Path(".")
@@ -90,6 +97,7 @@ class Config:
     vision: VisionConfig = field(default_factory=VisionConfig)
     permissions: PermissionConfig = field(default_factory=PermissionConfig)
     parent_approval: ParentApprovalConfig = field(default_factory=ParentApprovalConfig)
+    teacher_models: TeacherModelsConfig = field(default_factory=TeacherModelsConfig)
 
     @property
     def resolved_workspace(self) -> Path:

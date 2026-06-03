@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 from human_ai.config import Config
 from human_ai.memory import MemoryStore
-from human_ai.services import SafeToolRunner, WebImporter
+from human_ai.services import SafeToolRunner, TeacherModelClient, WebImporter
 
 
 class ServiceSafetyTests(unittest.TestCase):
@@ -38,6 +38,30 @@ class ServiceSafetyTests(unittest.TestCase):
                 importer.search("large language model", limit=1),
                 ["https://en.wikipedia.org/wiki/Large_language_model"],
             )
+
+    def test_teacher_model_requires_known_provider(self):
+        with self.assertRaises(ValueError):
+            TeacherModelClient(Config()).ask("unknown", "hello")
+
+    def test_openai_response_text_is_parsed(self):
+        client = TeacherModelClient(Config())
+        with patch.dict("os.environ", {"OPENAI_API_KEY": "test"}), patch(
+            "urllib.request.urlopen"
+        ) as urlopen:
+            urlopen.return_value.__enter__.return_value.read.return_value = (
+                b'{"output_text":"teacher answer"}'
+            )
+            self.assertEqual(client.ask("chatgpt", "hello"), "teacher answer")
+
+    def test_gemini_response_text_is_parsed(self):
+        client = TeacherModelClient(Config())
+        with patch.dict("os.environ", {"GEMINI_API_KEY": "test"}), patch(
+            "urllib.request.urlopen"
+        ) as urlopen:
+            urlopen.return_value.__enter__.return_value.read.return_value = (
+                b'{"candidates":[{"content":{"parts":[{"text":"gemini answer"}]}}]}'
+            )
+            self.assertEqual(client.ask("gemini", "hello"), "gemini answer")
 
 
 if __name__ == "__main__":

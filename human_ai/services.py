@@ -3,6 +3,7 @@ from __future__ import annotations
 import html
 import ipaddress
 import json
+import os
 import shutil
 import socket
 import subprocess
@@ -169,6 +170,73 @@ class LocalModel:
         with urllib.request.urlopen(request, timeout=self.config.timeout_seconds) as response:
             body = json.loads(response.read().decode("utf-8"))
         return body["choices"][0]["message"]["content"].strip()
+
+
+class TeacherModelClient:
+    def __init__(self, config: Config):
+        self.config = config.teacher_models
+
+    def ask(self, provider: str, prompt: str) -> str:
+        provider = provider.casefold().strip()
+        if provider in {"chatgpt", "openai"}:
+            return self._ask_openai(prompt)
+        if provider == "gemini":
+            return self._ask_gemini(prompt)
+        raise ValueError("Provider must be chatgpt, openai, or gemini")
+
+    def _ask_openai(self, prompt: str) -> str:
+        api_key = os.environ.get("OPENAI_API_KEY", "")
+        if not api_key:
+            raise RuntimeError("OPENAI_API_KEY is not set")
+        payload = json.dumps(
+            {
+                "model": self.config.openai_model,
+                "input": prompt,
+            }
+        ).encode("utf-8")
+        request = urllib.request.Request(
+            "https://api.openai.com/v1/responses",
+            data=payload,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=self.config.timeout_seconds) as response:
+            body = json.loads(response.read().decode("utf-8"))
+        if body.get("output_text"):
+            return body["output_text"].strip()
+        parts: List[str] = []
+        for item in body.get("output", []):
+            for content in item.get("content", []):
+                text = content.get("text")
+                if text:
+                    parts.append(text)
+        return "\n".join(parts).strip()
+
+    def _ask_gemini(self, prompt: str) -> str:
+        api_key = os.environ.get("GEMINI_API_KEY", "")
+        if not api_key:
+            raise RuntimeError("GEMINI_API_KEY is not set")
+        model = urllib.parse.quote(self.config.gemini_model, safe="")
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+        payload = json.dumps({"contents": [{"parts": [{"text": prompt}]}]}).encode("utf-8")
+        request = urllib.request.Request(
+            f"{url}?key={urllib.parse.quote(api_key)}",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=self.config.timeout_seconds) as response:
+            body = json.loads(response.read().decode("utf-8"))
+        parts: List[str] = []
+        for candidate in body.get("candidates", []):
+            for part in candidate.get("content", {}).get("parts", []):
+                text = part.get("text")
+                if text:
+                    parts.append(text)
+        return "\n".join(parts).strip()
 
 
 class Voice:

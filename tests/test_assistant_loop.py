@@ -107,6 +107,24 @@ class LocalAssistantTests(unittest.TestCase):
         self.assertIn("AI-human systems", reply.message)
         self.assertIn("ai-human-systems.md", reply.message)
 
+    def test_voice_can_ask_chatgpt_teacher(self):
+        assistant = self.make_assistant()
+        assistant.config.permissions.require_scoped_grants = False
+        with patch.object(assistant.agent, "ask_teacher", return_value="teacher answer") as ask:
+            reply = assistant.run_text_command("ask ChatGPT how to improve Gima")
+        self.assertEqual(reply.action, "teacher")
+        self.assertIn("teacher answer", reply.message)
+        ask.assert_called_once_with("chatgpt", "how to improve")
+
+    def test_voice_can_ask_gemini_teacher(self):
+        assistant = self.make_assistant()
+        assistant.config.permissions.require_scoped_grants = False
+        with patch.object(assistant.agent, "ask_teacher", return_value="gemini answer") as ask:
+            reply = assistant.run_text_command("ask Gemini explain camera interaction")
+        self.assertEqual(reply.action, "teacher")
+        self.assertIn("gemini answer", reply.message)
+        ask.assert_called_once_with("gemini", "explain camera interaction")
+
 
 if __name__ == "__main__":
     unittest.main()

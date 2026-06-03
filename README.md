@@ -107,6 +107,21 @@ for approving learned knowledge, not for unlimited machine access.
 For scripts, set `GIMA_PARENT_PASSWORD` in the environment instead of typing at
 the prompt.
 
+Teacher model knowledge transfer:
+
+```bash
+export OPENAI_API_KEY="..."
+export GEMINI_API_KEY="..."
+printf 'GRANT WEB\n' | python3 -m human_ai.cli --config config.local.json permission-grant --scope web --minutes 10
+python3 -m human_ai.gima teacher chatgpt "What should Gima learn about agent memory?"
+python3 -m human_ai.gima teacher gemini "How should Gima interact with camera observations?"
+python3 -m human_ai.gima transfer-knowledge "Give Gima five design lessons for safer personal AI assistants"
+```
+
+Teacher answers are saved as `teacher/chatgpt` or `teacher/gemini` review memory
+and appear in `.human-ai/csv/source_reviews.csv` for parent approval. In voice
+mode, say `ask ChatGPT ...` or `ask Gemini ...`.
+
 CSV memory is stored under `.human-ai/csv/`. The SQLite file
 `.human-ai/index.sqlite3` is only a generated search cache. Delete it and run
 `python3 -m human_ai.cli rebuild` at any time.

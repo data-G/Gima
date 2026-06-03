@@ -53,6 +53,18 @@ class LocalAssistant:
             if missing:
                 return AssistantReply(f"The core is running. Missing optional tools: {', '.join(missing)}.")
             return AssistantReply("All checked local tools are available.")
+        teacher_provider = self._teacher_provider(normalized)
+        if teacher_provider:
+            self.permissions.require("web")
+            prompt = self._teacher_prompt(text, teacher_provider)
+            if not prompt:
+                return AssistantReply(f"What should I ask {teacher_provider}?", "teacher")
+            self.terminal_event("ACTION", f"teacher: {teacher_provider}")
+            answer = self.agent.ask_teacher(teacher_provider, prompt)
+            return AssistantReply(
+                f"{teacher_provider} says: {answer[:900]}",
+                "teacher",
+            )
         if "take photo" in normalized or "take a photo" in normalized or "camera" in normalized:
             self.permissions.require("camera")
             self.terminal_event("ACTION", "camera photo requested")
@@ -164,6 +176,22 @@ class LocalAssistant:
             }
         )
         return has_learn_intent and has_topic
+
+    def _teacher_provider(self, normalized: str) -> str:
+        if any(phrase in normalized for phrase in {"ask chatgpt", "ask openai", "use chatgpt"}):
+            return "chatgpt"
+        if any(phrase in normalized for phrase in {"ask gemini", "use gemini"}):
+            return "gemini"
+        return ""
+
+    def _teacher_prompt(self, text: str, provider: str) -> str:
+        cleaned = re.sub(
+            rf"\b(please|gima|ask|use|{provider}|chatgpt|openai|gemini)\b",
+            " ",
+            text,
+            flags=re.IGNORECASE,
+        )
+        return " ".join(cleaned.strip(" ?.!,;:").split())
 
     def _is_web_learn_request(self, normalized: str) -> bool:
         return any(

@@ -82,6 +82,18 @@ def parser() -> argparse.ArgumentParser:
     reject.add_argument("review_id")
     reject.add_argument("--notes", default="")
 
+    teacher = commands.add_parser("teacher", help="Ask ChatGPT/OpenAI or Gemini and save the answer for review")
+    teacher.add_argument("provider", choices=["chatgpt", "openai", "gemini"])
+    teacher.add_argument("prompt", nargs="+")
+
+    transfer = commands.add_parser("transfer-knowledge", help="Ask teacher models and save knowledge for review")
+    transfer.add_argument("prompt", nargs="+")
+    transfer.add_argument(
+        "--provider",
+        choices=["chatgpt", "openai", "gemini", "both"],
+        default="both",
+    )
+
     commands.add_parser("doctor", help="Show optional local capabilities")
     return root
 
@@ -225,6 +237,18 @@ def main(argv=None) -> int:
             return _parent_decision(agent, permissions, args.review_id, "approved", args.notes)
         elif args.command == "reject":
             return _parent_decision(agent, permissions, args.review_id, "rejected", args.notes)
+        elif args.command == "teacher":
+            permissions.require("web")
+            answer = agent.ask_teacher(args.provider, " ".join(args.prompt))
+            print(answer)
+        elif args.command == "transfer-knowledge":
+            permissions.require("web")
+            providers = ["chatgpt", "gemini"] if args.provider == "both" else [args.provider]
+            results = agent.transfer_teacher_knowledge(" ".join(args.prompt), providers)
+            for provider, answer in results:
+                print(f"## {provider}")
+                print(answer)
+                print()
     except Exception as error:
         print(f"error: {error}", file=sys.stderr)
         return 1

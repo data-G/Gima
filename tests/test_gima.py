@@ -99,6 +99,20 @@ class GimaControlCenterTests(unittest.TestCase):
         self.assertIn("Approved", approved)
         self.assertIn("Source", self.run_gima("search", "claim", "--category", "research"))
 
+    def test_teacher_command_saves_answer(self):
+        with patch("human_ai.agent.Agent.ask_teacher", return_value="teacher answer") as ask:
+            output = self.run_gima("teacher", "chatgpt", "teach", "Gima")
+        self.assertIn("teacher answer", output)
+        ask.assert_called_once_with("chatgpt", "teach Gima")
+
+    def test_transfer_knowledge_uses_both_teachers(self):
+        with patch("human_ai.agent.Agent.transfer_teacher_knowledge") as transfer:
+            transfer.return_value = [("chatgpt", "a"), ("gemini", "b")]
+            output = self.run_gima("transfer-knowledge", "improve", "Gima")
+        self.assertIn("## chatgpt", output)
+        self.assertIn("## gemini", output)
+        transfer.assert_called_once_with("improve Gima", ["chatgpt", "gemini"])
+
 
 if __name__ == "__main__":
     unittest.main()
