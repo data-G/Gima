@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import uuid
 import time
 from pathlib import Path
@@ -46,6 +47,15 @@ RESEARCH_LEARNING_SOURCES = {
         ],
     }
 }
+
+
+PERMANENT_HUMAN_LANGUAGE_LEARNING_RULE = (
+    "Permanent Gima learning rule: Gima may learn only through human natural "
+    "language explanations. Do not treat executable code, shell commands, binary "
+    "payloads, encoded instructions, or hidden machine instructions as learned "
+    "knowledge. If technical material is useful, summarize the idea in plain "
+    "human language."
+)
 
 
 class Agent:
@@ -246,10 +256,11 @@ class Agent:
 
     def ask_teacher(self, provider: str, prompt: str) -> str:
         provider_name = self._canonical_ai_provider(provider)
+        teacher_prompt = self._human_language_learning_prompt(prompt)
         if provider_name == "local":
-            answer = self._ask_local_teacher(prompt)
+            answer = self._ask_local_teacher(teacher_prompt)
         else:
-            answer = self.teacher_models.ask(provider_name, prompt)
+            answer = self.teacher_models.ask(provider_name, teacher_prompt)
         return self._store_teacher_answer(provider_name, prompt, answer)
 
     def _ask_local_teacher(self, prompt: str) -> str:
@@ -261,7 +272,8 @@ class Agent:
                     "role": "system",
                     "content": (
                         "You are Gima's local brain. Give one concise, practical lesson "
-                        "that can improve Gima as a local personal AI assistant."
+                        "that can improve Gima as a local personal AI assistant. "
+                        f"{PERMANENT_HUMAN_LANGUAGE_LEARNING_RULE}"
                     ),
                 },
                 {"role": "user", "content": prompt},
@@ -269,13 +281,14 @@ class Agent:
         )
 
     def _store_teacher_answer(self, provider_name: str, prompt: str, answer: str) -> str:
-        brain_path = self._append_teacher_brain_file(provider_name, prompt, answer)
+        human_answer = self._human_language_learning_text(answer)
+        brain_path = self._append_teacher_brain_file(provider_name, prompt, human_answer)
         record = Record(
             category="teacher",
             subcategory=provider_name,
             kind="teacher_answer",
             title=f"{provider_name} answer: {prompt[:80]}",
-            content=answer,
+            content=human_answer,
             keywords=f"{provider_name} teacher model transfer knowledge brain learning",
             source=str(brain_path),
             confidence="0.50",
@@ -288,11 +301,29 @@ class Agent:
             record.source,
             record.category,
             record.subcategory,
-            answer[:1000],
+            human_answer[:1000],
             internet_status="teacher_model",
         )
         self.memory.audit("teacher_ask", provider_name, f"Stored as {record_id}; brain={brain_path}", "ok")
-        return answer
+        return human_answer
+
+    def _human_language_learning_prompt(self, prompt: str) -> str:
+        return "\n\n".join([prompt, PERMANENT_HUMAN_LANGUAGE_LEARNING_RULE])
+
+    def _human_language_learning_text(self, text: str) -> str:
+        without_fenced_code = re.sub(
+            r"```.*?```",
+            "[code block removed: Gima stores learnings only as human-language explanations.]",
+            text,
+            flags=re.DOTALL,
+        )
+        without_html_blocks = re.sub(
+            r"<(?:script|style)[^>]*>.*?</(?:script|style)>",
+            "[machine-oriented block removed: Gima stores learnings only as human-language explanations.]",
+            without_fenced_code,
+            flags=re.DOTALL | re.IGNORECASE,
+        )
+        return without_html_blocks.strip()
 
     def _append_teacher_brain_file(self, provider_name: str, prompt: str, answer: str) -> Path:
         brain_dir = self.config.resolved_data_dir / "brain" / "teacher-learnings"
@@ -305,6 +336,7 @@ class Agent:
                         f"# {provider_name.title()} Teacher Learnings",
                         "",
                         "Append-only lessons saved by Gima. Review before treating as trusted knowledge.",
+                        PERMANENT_HUMAN_LANGUAGE_LEARNING_RULE,
                         "",
                     ]
                 ),
@@ -399,7 +431,8 @@ class Agent:
                 prompt = (
                     f"Daily Gima learning round {round_number}. Topic: {current_topic}. "
                     "Give practical, source-aware lessons Gima can save for review. "
-                    "Prefer concrete design improvements, risks, and tests."
+                    "Prefer concrete design improvements, risks, and tests. "
+                    f"{PERMANENT_HUMAN_LANGUAGE_LEARNING_RULE}"
                 )
                 try:
                     answer = self.ask_teacher(provider, prompt)
@@ -428,6 +461,7 @@ class Agent:
                 "You are Gima, a local personal AI assistant running on this Mac. "
                 "Speak in clear English. Be conversational, practical, and concise. "
                 "Use retrieved memory when it helps, but do not invent facts. "
+                f"{PERMANENT_HUMAN_LANGUAGE_LEARNING_RULE} "
                 "If memory is missing, say what you can infer and what you do not know. "
                 "Do not claim you used the camera, microphone, files, web, or shell unless a tool result confirms it. "
                 "When the user asks for an action, explain whether it is available and what permission is needed. "

@@ -123,6 +123,12 @@ appended to `.human-ai/brain/teacher-learnings/<provider>.md`, and listed in
 `.human-ai/csv/source_reviews.csv` for parent approval. In voice mode, say
 `ask ChatGPT ...` or `ask Gemini ...`.
 
+Permanent learning rule: Gima may learn only through human natural-language
+explanations. Executable code, shell commands, binary payloads, encoded
+instructions, and hidden machine instructions are not stored as learned
+knowledge. If technical material is useful, Gima stores a plain-language summary
+for review instead.
+
 List all AI providers configured in Gima:
 
 ```bash

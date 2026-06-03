@@ -121,6 +121,37 @@ class GimaControlCenterTests(unittest.TestCase):
         reviews = agent.memory.list_source_reviews("pending", 5)
         self.assertEqual(str(brain_file.resolve()), reviews[0]["source"])
 
+    def test_teacher_learning_uses_human_language_rule(self):
+        from human_ai.agent import Agent, PERMANENT_HUMAN_LANGUAGE_LEARNING_RULE
+        from human_ai.config import load_config
+
+        agent = Agent(load_config(str(self.config_path)))
+        with patch.object(agent.teacher_models, "ask", return_value="plain lesson") as ask:
+            answer = agent.ask_teacher("chatgpt", "teach memory")
+
+        self.assertEqual(answer, "plain lesson")
+        sent_prompt = ask.call_args.args[1]
+        self.assertIn("teach memory", sent_prompt)
+        self.assertIn(PERMANENT_HUMAN_LANGUAGE_LEARNING_RULE, sent_prompt)
+
+    def test_teacher_learning_does_not_store_code_blocks(self):
+        from human_ai.agent import Agent
+        from human_ai.config import load_config
+
+        agent = Agent(load_config(str(self.config_path)))
+        answer = agent._store_teacher_answer(
+            "chatgpt",
+            "teach safely",
+            "Use clear consent.\n```bash\nrm -rf /\n```\nExplain risks.",
+        )
+
+        self.assertIn("code block removed", answer)
+        self.assertNotIn("rm -rf", answer)
+        brain_file = Path(self.temp.name) / ".human-ai" / "brain" / "teacher-learnings" / "chatgpt.md"
+        text = brain_file.read_text(encoding="utf-8")
+        self.assertIn("code block removed", text)
+        self.assertNotIn("rm -rf", text)
+
     def test_transfer_knowledge_uses_both_teachers(self):
         with patch("human_ai.agent.Agent.transfer_teacher_knowledge") as transfer:
             transfer.return_value = [("chatgpt", "a"), ("gemini", "b")]
