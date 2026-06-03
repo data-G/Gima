@@ -12,6 +12,13 @@ class ModelConfig:
     base_url: str = "http://127.0.0.1:8080/v1"
     model: str = "local-model"
     timeout_seconds: int = 90
+    model_path: str = "~/.local/share/gima/models/qwen2.5-1.5b-instruct-q4_k_m.gguf"
+    context_size: int = 4096
+    host: str = "127.0.0.1"
+    port: int = 8080
+    device: str = "none"
+    gpu_layers: int = 0
+    warmup: bool = False
 
 
 @dataclass

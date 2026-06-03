@@ -87,6 +87,45 @@ Tool execution is disabled by default. When enabled, the runner accepts only
 configured executable names, uses the configured workspace as its working
 directory, captures output, enforces a timeout, and writes an audit event.
 
+## Local Brain
+
+Gima can use a local `llama.cpp` model as its ChatGPT-style language brain. This
+keeps the conversation on this Mac and exposes the model through an
+OpenAI-compatible local server at `http://127.0.0.1:8080/v1`.
+
+Create a private `config.local.json`, enable the model, and point it at a GGUF
+file:
+
+```json
+{
+  "model": {
+    "enabled": true,
+    "base_url": "http://127.0.0.1:8080/v1",
+    "model": "gima-local-qwen2.5-1.5b",
+    "model_path": "~/.local/share/gima/models/qwen2.5-1.5b-instruct-q4_k_m.gguf",
+    "context_size": 4096,
+    "host": "127.0.0.1",
+    "port": 8080,
+    "device": "none",
+    "gpu_layers": 0,
+    "warmup": false
+  }
+}
+```
+
+Then run:
+
+```bash
+python3 -m human_ai.cli --config config.local.json brain-start
+python3 -m human_ai.cli --config config.local.json brain-status
+python3 -m human_ai.cli --config config.local.json chat "Talk to me like Gima"
+python3 -m human_ai.cli --config config.local.json brain-stop
+```
+
+This is not the same scale as ChatGPT or Gemini. The local model is smaller, but
+it can answer conversationally, use retrieved CSV memory, and run without paying
+for a cloud API.
+
 ## Scoped Permissions
 
 The agent never accepts a spoken password as authorization for full machine

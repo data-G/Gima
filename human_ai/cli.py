@@ -7,6 +7,7 @@ from pathlib import Path
 
 from .agent import Agent
 from .assistant_loop import LocalAssistant
+from .brain import BrainServer
 from .config import load_config
 from .daily_summary import DailySummaryService
 from .memory import Record
@@ -31,6 +32,9 @@ def parser() -> argparse.ArgumentParser:
     commands.add_parser("init", help="Initialize local memory files")
     commands.add_parser("doctor", help="Report optional local capabilities")
     commands.add_parser("rebuild", help="Regenerate the disposable SQLite search index")
+    commands.add_parser("brain-start", help="Start the local OpenAI-compatible brain server")
+    commands.add_parser("brain-stop", help="Stop the local brain server")
+    commands.add_parser("brain-status", help="Show local brain server status")
 
     permission_grant = commands.add_parser("permission-grant", help="Start a short scoped permission session")
     permission_grant.add_argument("--scope", action="append", choices=sorted(ALLOWED_SCOPES), required=True)
@@ -172,6 +176,14 @@ def main(argv=None) -> int:
             print(json.dumps(dependency_report(), indent=2))
         elif args.command == "rebuild":
             print(f"Rebuilt index with {agent.memory.rebuild_index()} records")
+        elif args.command == "brain-start":
+            pid = BrainServer(config, agent.memory).start()
+            print(f"Brain server is running at {config.model.base_url} with pid {pid}")
+        elif args.command == "brain-stop":
+            BrainServer(config, agent.memory).stop()
+            print("Brain server stopped.")
+        elif args.command == "brain-status":
+            print(json.dumps(BrainServer(config, agent.memory).status(), indent=2))
         elif args.command == "permission-grant":
             expected = f"GRANT {','.join(sorted(set(args.scope))).upper()}"
             confirmation = input(f"Type {expected} to authorize this local session: ").strip()
