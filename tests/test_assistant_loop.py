@@ -81,6 +81,19 @@ class LocalAssistantTests(unittest.TestCase):
         self.assertEqual(reply.action, "web_learn")
         self.assertIn("kb_456", reply.message)
 
+    def test_voice_can_learn_sinhala(self):
+        assistant = self.make_assistant()
+        assistant.config.permissions.require_scoped_grants = False
+        with patch.object(
+            assistant.agent,
+            "learn_language",
+            return_value=Path("/tmp/sinhala.md"),
+        ):
+            reply = assistant.run_text_command("learn Sinhala")
+        self.assertEqual(reply.action, "language_learn")
+        self.assertIn("Sinhala", reply.message)
+        self.assertIn("sinhala.md", reply.message)
+
 
 if __name__ == "__main__":
     unittest.main()

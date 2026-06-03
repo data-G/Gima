@@ -10,6 +10,19 @@ from .readers import iter_files, read_file
 from .services import LocalModel, WebImporter
 
 
+LANGUAGE_LEARNING_SOURCES = {
+    "sinhala": {
+        "title": "Sinhala",
+        "file": "sinhala.md",
+        "sources": [
+            "https://en.wikipedia.org/wiki/Sinhala_language",
+            "https://en.wikipedia.org/wiki/Sinhala_script",
+            "https://en.wikipedia.org/wiki/Sinhala_alphabet",
+        ],
+    }
+}
+
+
 class Agent:
     def __init__(self, config: Config):
         self.config = config
@@ -56,6 +69,59 @@ class Agent:
                 self.memory.audit("web_learn", url, str(error), "error")
         self.memory.audit("web_learn", query, f"Imported {len(imported)} pages", "ok")
         return imported
+
+    def learn_language(self, language: str) -> Path:
+        key = language.casefold().strip()
+        profile = LANGUAGE_LEARNING_SOURCES.get(key)
+        if not profile:
+            raise ValueError(f"No language learning profile is configured for {language}")
+        importer = WebImporter(self.config.web.allowed_domains)
+        sections: List[str] = [
+            f"# {profile['title']} Knowledge",
+            "",
+            "This file was created by Gima from public internet sources.",
+            "Review sources before treating new facts as trusted.",
+            "",
+        ]
+        source_lines: List[str] = []
+        for url in profile["sources"]:
+            text = importer.fetch(url)
+            sections.extend(
+                [
+                    f"## Source: {url}",
+                    "",
+                    text[:20000],
+                    "",
+                ]
+            )
+            source_lines.append(url)
+        knowledge_dir = self.config.resolved_data_dir / "knowledge"
+        knowledge_dir.mkdir(parents=True, exist_ok=True)
+        target = knowledge_dir / str(profile["file"])
+        target.write_text("\n".join(sections), encoding="utf-8")
+        self.memory.replace_source(
+            str(target),
+            [
+                Record(
+                    category="language",
+                    subcategory=key,
+                    kind="knowledge_file",
+                    title=f"{profile['title']} knowledge",
+                    content=target.read_text(encoding="utf-8")[:100000],
+                    keywords=f"{profile['title']} {key} language script alphabet grammar Sinhala සිංහල",
+                    source=str(target),
+                    confidence="0.70",
+                    status="active",
+                )
+            ],
+        )
+        self.memory.audit(
+            "language_learn",
+            key,
+            f"Saved {target} from {len(source_lines)} sources",
+            "ok",
+        )
+        return target
 
     def search(self, query: str, category: str | None = None, limit: int = 8):
         return self.memory.search(query, category=category, limit=limit)

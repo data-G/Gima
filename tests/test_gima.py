@@ -55,6 +55,13 @@ class GimaControlCenterTests(unittest.TestCase):
         self.assertIn("Imported https://example.com/source as kb_web", output)
         learn_web.assert_called_once_with("local LLM memory", "research", 3)
 
+    def test_learn_language_saves_knowledge_file(self):
+        with patch("human_ai.agent.Agent.learn_language") as learn_language:
+            learn_language.return_value = Path(self.temp.name) / ".human-ai" / "knowledge" / "sinhala.md"
+            output = self.run_gima("learn-language", "sinhala")
+        self.assertIn("sinhala.md", output)
+        learn_language.assert_called_once_with("sinhala")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -57,6 +57,9 @@ def parser() -> argparse.ArgumentParser:
     learn_web.add_argument("--category", default="research")
     learn_web.add_argument("--limit", type=int, default=3)
 
+    learn_language = commands.add_parser("learn-language", help="Learn a configured language topic")
+    learn_language.add_argument("language", choices=["sinhala"])
+
     search = commands.add_parser("search", help="Search Gima memory")
     search.add_argument("query")
     search.add_argument("--category")
@@ -163,6 +166,10 @@ def main(argv=None) -> int:
                 print("No public pages were imported. Try a direct URL with gima learn.")
             for url, record_id in imported:
                 print(f"Imported {url} as {record_id}")
+        elif args.command == "learn-language":
+            permissions.require("web")
+            path = agent.learn_language(args.language)
+            print(f"Learned {args.language} and saved knowledge to {path}")
         elif args.command == "search":
             _print_rows(agent.search(args.query, args.category, args.limit))
     except Exception as error:

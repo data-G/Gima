@@ -75,6 +75,14 @@ class LocalAssistant:
                 self.agent.memory,
             ).generate()
             return AssistantReply(f"I created the daily source summary attachment at {summary.attachment_path}.")
+        if self._is_language_learn_request(normalized, "sinhala"):
+            self.permissions.require("web")
+            self.terminal_event("ACTION", "learn language: sinhala")
+            path = self.agent.learn_language("sinhala")
+            return AssistantReply(
+                f"I learned Sinhala from public internet sources, saved it in {path}, and indexed it in language memory. Ask me anything about Sinhala.",
+                "language_learn",
+            )
         if self._is_web_learn_request(normalized):
             self.permissions.require("web")
             url = self._first_url(text)
@@ -112,6 +120,17 @@ class LocalAssistant:
             return AssistantReply(f"I found these local memories: {titles}.")
         self.terminal_event("ACTION", "chat fallback")
         return AssistantReply(self.agent.chat(text), "chat")
+
+    def _is_language_learn_request(self, normalized: str, language: str) -> bool:
+        return language in normalized and any(
+            phrase in normalized
+            for phrase in {
+                "learn",
+                "study",
+                "teach yourself",
+                "know about",
+            }
+        )
 
     def _is_web_learn_request(self, normalized: str) -> bool:
         return any(
