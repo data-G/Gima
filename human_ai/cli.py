@@ -123,6 +123,8 @@ def parser() -> argparse.ArgumentParser:
     assistant.add_argument("--wake-seconds", type=int, default=4)
     assistant.add_argument("--command-seconds", type=int, default=6)
     assistant.add_argument("--cycles", type=int, default=20)
+    assistant.add_argument("--conversation-turns", type=int, default=20)
+    assistant.add_argument("--forever", action="store_true", help="After End Game, return to waiting for Gima")
     assistant.add_argument("--device", default=":0", help="FFmpeg avfoundation audio input device")
     assistant.add_argument("--capture-photo", action="store_const", const=True, default=None)
 
@@ -302,6 +304,8 @@ def main(argv=None) -> int:
                 wake_seconds=args.wake_seconds,
                 command_seconds=args.command_seconds,
                 cycles=args.cycles,
+                conversation_turns=args.conversation_turns,
+                forever=args.forever,
                 device=args.device,
                 capture_photo=args.capture_photo,
             )

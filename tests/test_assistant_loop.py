@@ -24,6 +24,15 @@ class LocalAssistantTests(unittest.TestCase):
         reply = self.make_assistant().run_text_command("sleep")
         self.assertEqual(reply.action, "stop")
 
+    def test_end_game_command_stops(self):
+        reply = self.make_assistant().run_text_command("End Game")
+        self.assertEqual(reply.action, "stop")
+        self.assertIn("sleep", reply.message)
+
+    def test_end_game_alias_command_stops(self):
+        reply = self.make_assistant().run_text_command("endgame")
+        self.assertEqual(reply.action, "stop")
+
     def test_status_command_reports_tools(self):
         reply = self.make_assistant().run_text_command("status")
         self.assertIn("core", reply.message.casefold())

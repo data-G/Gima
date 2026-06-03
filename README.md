@@ -215,18 +215,29 @@ specific source.
 
 ## Voice Assistant
 
-`assistant-run` waits for the wake word, says it is listening, records one spoken
-command, answers through the Mac speaker, logs the exchange, and performs only
-bounded local actions. Supported built-in actions include time/status answers,
-camera photo, screenshot, daily summary creation, and local memory search.
-Actions still require active scoped permissions.
+`assistant-run` waits for the wake word, says it is listening, then keeps a
+conversation open until it hears `End Game`. It answers through the Mac speaker,
+logs the exchange, and performs only bounded local actions. Supported built-in
+actions include time/status answers, camera photo, screenshot, daily summary
+creation, and local memory search. Actions still require active scoped
+permissions.
 
 Example:
 
 ```bash
 printf 'GRANT MICROPHONE,CAMERA\\n' | python3 -m human_ai.cli permission-grant --scope microphone --scope camera --minutes 10
-python3 -m human_ai.cli assistant-run --model ~/.local/share/gima/models/ggml-tiny.bin --cycles 20
+python3 -m human_ai.cli assistant-run --model ~/.local/share/gima/models/ggml-tiny.bin --cycles 20 --conversation-turns 20
 ```
+
+For a visible 24/7-style loop, run:
+
+```bash
+python3 -m human_ai.cli assistant-run --model ~/.local/share/gima/models/ggml-tiny.bin --forever --cycles 999999 --conversation-turns 999999
+```
+
+Kill phrase: say `End Game`. In normal mode that stops the process. In
+`--forever` mode it ends the current conversation and returns to waiting for
+`Gima`.
 
 ## Memory Layout
 

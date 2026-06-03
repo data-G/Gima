@@ -28,6 +28,8 @@
   "wake": {
     "word": "Gima",
     "aliases": ["jima", "gimma", "geema"],
+    "end_phrase": "End Game",
+    "end_aliases": ["endgame", "and game"],
     "camera_on_wake": false,
     "speak_on_wake": true,
     "profile_name": "Gima",

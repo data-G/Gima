@@ -14,6 +14,7 @@ from .permissions import PermissionManager
 from .readers import read_file
 from .services import MediaAnalyzer, MediaCapture, Voice, dependency_report
 from .wake import WakeAssistant
+from .wake import normalize_speech
 
 
 @dataclass
@@ -35,7 +36,7 @@ class LocalAssistant:
         normalized = " ".join(text.casefold().strip().split())
         if not normalized:
             return AssistantReply("I did not hear a command.")
-        if normalized in {"stop", "exit", "quit", "goodbye", "sleep"}:
+        if self.is_end_phrase(normalized) or normalized in {"stop", "exit", "quit", "goodbye", "sleep"}:
             return AssistantReply("Okay. I am going back to sleep.", "stop")
         if "time" in normalized:
             return AssistantReply(f"It is {datetime.now().astimezone().strftime('%H:%M on %A, %B %d')}.")
@@ -73,6 +74,14 @@ class LocalAssistant:
             return AssistantReply(f"I found these local memories: {titles}.")
         return AssistantReply(self.agent.chat(text), "chat")
 
+    def is_end_phrase(self, text: str) -> bool:
+        spoken = normalize_speech(text)
+        accepted = {
+            normalize_speech(self.config.wake.end_phrase),
+            *[normalize_speech(value) for value in self.config.wake.end_aliases],
+        }
+        return spoken in accepted or any(phrase and phrase in spoken for phrase in accepted)
+
     def listen_once(
         self, analyzer: MediaAnalyzer, model: Path, seconds: int, device: str, label: str = "command"
     ) -> str:
@@ -87,6 +96,8 @@ class LocalAssistant:
         wake_seconds: int = 4,
         command_seconds: int = 6,
         cycles: int = 20,
+        conversation_turns: int = 20,
+        forever: bool = False,
         device: str = ":0",
         capture_photo: Optional[bool] = None,
     ) -> int:
@@ -105,35 +116,53 @@ class LocalAssistant:
         analyzer = MediaAnalyzer(self.config.resolved_data_dir / "media" / "assistant_audio")
         wake = WakeAssistant(self.config, self.agent.memory)
         try:
-            for cycle in range(max(1, cycles)):
-                try:
-                    transcript = self.listen_once(analyzer, model, wake_seconds, device, "wake")
-                except Exception as error:
-                    print(f"audio warning> {error}")
-                    time.sleep(1)
-                    continue
-                print(f"heard wake> {transcript}")
-                result = wake.respond(transcript, capture_photo=capture_photo)
-                if not result.activated:
-                    time.sleep(0.5)
-                    continue
-                self.voice.speak("I am listening.")
-                try:
-                    command = self.listen_once(analyzer, model, command_seconds, device, "command")
-                except Exception as error:
-                    command = ""
-                    print(f"audio warning> {error}")
-                print(f"heard command> {command}")
-                self.agent.memory.append_conversation(self.agent.session_id, "user", command, category="voice_command")
-                reply = self.run_text_command(command)
-                self.agent.memory.append_conversation(
-                    self.agent.session_id, "assistant", reply.message, category="voice_command"
-                )
-                print(reply.message)
-                self.voice.speak(reply.message)
-                return 0
-            print("Wake word not detected.")
-            return 2
+            while True:
+                woke = False
+                for cycle in range(max(1, cycles)):
+                    try:
+                        transcript = self.listen_once(analyzer, model, wake_seconds, device, "wake")
+                    except Exception as error:
+                        print(f"audio warning> {error}")
+                        time.sleep(1)
+                        continue
+                    print(f"heard wake> {transcript}")
+                    result = wake.respond(transcript, capture_photo=capture_photo)
+                    if not result.activated:
+                        time.sleep(0.5)
+                        continue
+                    woke = True
+                    break
+                if not woke:
+                    print("Wake word not detected.")
+                    return 2
+                self.voice.speak("I am listening. Say End Game to stop.")
+                for turn in range(max(1, conversation_turns)):
+                    try:
+                        command = self.listen_once(analyzer, model, command_seconds, device, "command")
+                    except Exception as error:
+                        command = ""
+                        print(f"audio warning> {error}")
+                    print(f"heard command> {command}")
+                    self.agent.memory.append_conversation(
+                        self.agent.session_id, "user", command, category="voice_command"
+                    )
+                    reply = self.run_text_command(command)
+                    self.agent.memory.append_conversation(
+                        self.agent.session_id, "assistant", reply.message, category="voice_command"
+                    )
+                    print(reply.message)
+                    self.voice.speak(reply.message)
+                    if reply.action == "stop":
+                        if forever:
+                            self.voice.speak("Waiting for Gima.")
+                            break
+                        return 0
+                else:
+                    self.voice.speak("Conversation window ended. I am going back to sleep.")
+                    if not forever:
+                        return 0
+                if not forever:
+                    return 0
         finally:
             if lock_path.exists() and lock_path.read_text(encoding="utf-8").strip() == str(os.getpid()):
                 lock_path.unlink()
