@@ -40,7 +40,7 @@ class ToolConfig:
 @dataclass
 class WakeConfig:
     word: str = "Gima"
-    aliases: List[str] = field(default_factory=list)
+    aliases: List[str] = field(default_factory=lambda: ["jima", "gimma", "geema"])
     camera_on_wake: bool = False
     speak_on_wake: bool = True
     profile_name: str = "Gima"

@@ -4,6 +4,9 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
+import uuid
+import time
+import os
 
 from .agent import Agent
 from .daily_summary import DailySummaryService
@@ -70,8 +73,12 @@ class LocalAssistant:
             return AssistantReply(f"I found these local memories: {titles}.")
         return AssistantReply(self.agent.chat(text), "chat")
 
-    def listen_once(self, analyzer: MediaAnalyzer, model: Path, seconds: int, device: str) -> str:
-        source = analyzer.record_microphone("assistant_command.wav", seconds, device)
+    def listen_once(
+        self, analyzer: MediaAnalyzer, model: Path, seconds: int, device: str, label: str = "command"
+    ) -> str:
+        source = analyzer.record_microphone(
+            f"assistant_{label}_{uuid.uuid4().hex}.wav", seconds, device
+        )
         return analyzer.transcribe(source, model).strip()
 
     def run_after_wake(
@@ -84,24 +91,49 @@ class LocalAssistant:
         capture_photo: Optional[bool] = None,
     ) -> int:
         self.permissions.require("microphone")
+        lock_path = self.config.resolved_data_dir / "assistant.lock"
+        if lock_path.exists():
+            try:
+                existing_pid = int(lock_path.read_text(encoding="utf-8").strip())
+                os.kill(existing_pid, 0)
+                raise RuntimeError(f"Assistant is already running as process {existing_pid}")
+            except ProcessLookupError:
+                lock_path.unlink()
+            except ValueError:
+                lock_path.unlink()
+        lock_path.write_text(str(os.getpid()), encoding="utf-8")
         analyzer = MediaAnalyzer(self.config.resolved_data_dir / "media" / "assistant_audio")
         wake = WakeAssistant(self.config, self.agent.memory)
-        for cycle in range(max(1, cycles)):
-            transcript = self.listen_once(analyzer, model, wake_seconds, device)
-            print(f"heard wake> {transcript}")
-            result = wake.respond(transcript, capture_photo=capture_photo)
-            if not result.activated:
-                continue
-            self.voice.speak("I am listening.")
-            command = self.listen_once(analyzer, model, command_seconds, device)
-            print(f"heard command> {command}")
-            self.agent.memory.append_conversation(self.agent.session_id, "user", command, category="voice_command")
-            reply = self.run_text_command(command)
-            self.agent.memory.append_conversation(
-                self.agent.session_id, "assistant", reply.message, category="voice_command"
-            )
-            print(reply.message)
-            self.voice.speak(reply.message)
-            return 0
-        print("Wake word not detected.")
-        return 2
+        try:
+            for cycle in range(max(1, cycles)):
+                try:
+                    transcript = self.listen_once(analyzer, model, wake_seconds, device, "wake")
+                except Exception as error:
+                    print(f"audio warning> {error}")
+                    time.sleep(1)
+                    continue
+                print(f"heard wake> {transcript}")
+                result = wake.respond(transcript, capture_photo=capture_photo)
+                if not result.activated:
+                    time.sleep(0.5)
+                    continue
+                self.voice.speak("I am listening.")
+                try:
+                    command = self.listen_once(analyzer, model, command_seconds, device, "command")
+                except Exception as error:
+                    command = ""
+                    print(f"audio warning> {error}")
+                print(f"heard command> {command}")
+                self.agent.memory.append_conversation(self.agent.session_id, "user", command, category="voice_command")
+                reply = self.run_text_command(command)
+                self.agent.memory.append_conversation(
+                    self.agent.session_id, "assistant", reply.message, category="voice_command"
+                )
+                print(reply.message)
+                self.voice.speak(reply.message)
+                return 0
+            print("Wake word not detected.")
+            return 2
+        finally:
+            if lock_path.exists() and lock_path.read_text(encoding="utf-8").strip() == str(os.getpid()):
+                lock_path.unlink()
