@@ -53,5 +53,9 @@
   "permissions": {
     "require_scoped_grants": true,
     "maximum_minutes": 30
+  },
+  "parent_approval": {
+    "reviewer_name": "Gima parent",
+    "password_sha256": ""
   }
 }

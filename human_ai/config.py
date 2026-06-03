@@ -73,6 +73,12 @@ class PermissionConfig:
 
 
 @dataclass
+class ParentApprovalConfig:
+    reviewer_name: str = "Gima parent"
+    password_sha256: str = ""
+
+
+@dataclass
 class Config:
     name: str = "Gima"
     workspace: Path = Path(".")
@@ -83,6 +89,7 @@ class Config:
     wake: WakeConfig = field(default_factory=WakeConfig)
     vision: VisionConfig = field(default_factory=VisionConfig)
     permissions: PermissionConfig = field(default_factory=PermissionConfig)
+    parent_approval: ParentApprovalConfig = field(default_factory=ParentApprovalConfig)
 
     @property
     def resolved_workspace(self) -> Path:

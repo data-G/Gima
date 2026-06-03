@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import getpass
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -68,6 +70,18 @@ def parser() -> argparse.ArgumentParser:
     search.add_argument("--category")
     search.add_argument("--limit", type=int, default=8)
 
+    reviews = commands.add_parser("reviews", help="List source review rows")
+    reviews.add_argument("--status", default="pending", help="Parent status filter, or 'all'")
+    reviews.add_argument("--limit", type=int, default=20)
+
+    approve = commands.add_parser("approve", help="Approve one learned source review")
+    approve.add_argument("review_id")
+    approve.add_argument("--notes", default="")
+
+    reject = commands.add_parser("reject", help="Reject one learned source review")
+    reject.add_argument("review_id")
+    reject.add_argument("--notes", default="")
+
     commands.add_parser("doctor", help="Show optional local capabilities")
     return root
 
@@ -95,6 +109,31 @@ def _print_rows(rows) -> None:
         print(f"[{row['id']}] {row['category']}/{row['subcategory']} - {row['title']}")
         print(row["content"][:500].replace("\n", " "))
         print()
+
+
+def _print_reviews(rows) -> None:
+    if not rows:
+        print("No matching source reviews.")
+        return
+    for row in rows:
+        print(f"[{row['id']}] {row['parent_status']} - {row['title']}")
+        print(f"source: {row['source']}")
+        print(f"record: {row['record_id']} category: {row['category']}/{row['subcategory']}")
+        print(row["claim_summary"][:500].replace("\n", " "))
+        print()
+
+
+def _parent_decision(agent: Agent, permissions: PermissionManager, review_id: str, decision: str, notes: str) -> int:
+    password = os.environ.get("GIMA_PARENT_PASSWORD") or getpass.getpass("Parent approval password: ")
+    if not permissions.verify_parent_password(password):
+        print("Parent approval password did not match.", file=sys.stderr)
+        return 1
+    reviewer = agent.config.parent_approval.reviewer_name
+    if not agent.memory.parent_review_decision(review_id, decision, reviewer, notes):
+        print(f"Unknown review id: {review_id}", file=sys.stderr)
+        return 1
+    print(f"{decision.title()} {review_id} as {reviewer}")
+    return 0
 
 
 def _print_status(agent: Agent, brain: BrainServer, config_path: str | None) -> None:
@@ -179,6 +218,13 @@ def main(argv=None) -> int:
             print(f"Learned {args.profile} research and saved knowledge to {path}")
         elif args.command == "search":
             _print_rows(agent.search(args.query, args.category, args.limit))
+        elif args.command == "reviews":
+            status = None if args.status == "all" else args.status
+            _print_reviews(agent.memory.list_source_reviews(status, args.limit))
+        elif args.command == "approve":
+            return _parent_decision(agent, permissions, args.review_id, "approved", args.notes)
+        elif args.command == "reject":
+            return _parent_decision(agent, permissions, args.review_id, "rejected", args.notes)
     except Exception as error:
         print(f"error: {error}", file=sys.stderr)
         return 1

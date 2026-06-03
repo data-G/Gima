@@ -51,6 +51,37 @@ class MemoryStoreTests(unittest.TestCase):
         self.assertTrue(self.store.update_status(record.id, "active"))
         self.assertEqual(self.store.search("review")[0]["id"], record.id)
 
+    def test_source_review_can_be_parent_approved(self):
+        record = Record(category="research", title="Draft fact", content="review me", status="review")
+        record_id = self.store.add(record)
+        review_id = self.store.add_source_review(
+            record_id,
+            "Draft fact",
+            "https://example.com",
+            "research",
+            "web",
+            "review me",
+        )
+        self.assertEqual(self.store.list_source_reviews("pending")[0]["id"], review_id)
+        self.assertTrue(self.store.parent_review_decision(review_id, "approved", "Gima parent", "looks correct"))
+        self.assertEqual(self.store.search("review")[0]["id"], record_id)
+        self.assertEqual(self.store.list_source_reviews("approved")[0]["approved_by"], "Gima parent")
+
+    def test_source_review_reject_archives_record(self):
+        record = Record(category="research", title="Draft fact", content="review me", status="review")
+        record_id = self.store.add(record)
+        review_id = self.store.add_source_review(
+            record_id,
+            "Draft fact",
+            "https://example.com",
+            "research",
+            "web",
+            "review me",
+        )
+        self.assertTrue(self.store.parent_review_decision(review_id, "rejected", "Gima parent", "bad source"))
+        self.assertEqual(self.store.search("review"), [])
+        self.assertEqual(self.store.list_by_status("archived")[0]["id"], record_id)
+
     def test_replace_source_archives_stale_chunks(self):
         source = "/tmp/note.txt"
         self.store.replace_source(

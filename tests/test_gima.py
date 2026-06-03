@@ -1,4 +1,5 @@
 import io
+import hashlib
 import json
 import tempfile
 import unittest
@@ -20,6 +21,10 @@ class GimaControlCenterTests(unittest.TestCase):
                     "data_dir": ".human-ai",
                     "model": {"enabled": False},
                     "permissions": {"require_scoped_grants": False},
+                    "parent_approval": {
+                        "reviewer_name": "Gima parent",
+                        "password_sha256": hashlib.sha256("parent-pass".encode("utf-8")).hexdigest(),
+                    },
                 }
             ),
             encoding="utf-8",
@@ -70,6 +75,29 @@ class GimaControlCenterTests(unittest.TestCase):
             output = self.run_gima("learn-research", "ai-human-systems")
         self.assertIn("ai-human-systems.md", output)
         learn_research.assert_called_once_with("ai-human-systems")
+
+    def test_reviews_and_parent_approval(self):
+        from human_ai.agent import Agent
+        from human_ai.config import load_config
+        from human_ai.memory import Record
+
+        agent = Agent(load_config(str(self.config_path)))
+        record = Record(category="research", title="Source", content="claim", status="review")
+        record_id = agent.memory.add(record)
+        review_id = agent.memory.add_source_review(
+            record_id,
+            "Source",
+            "https://example.com",
+            "research",
+            "web",
+            "claim",
+        )
+        output = self.run_gima("reviews")
+        self.assertIn(review_id, output)
+        with patch("getpass.getpass", return_value="parent-pass"):
+            approved = self.run_gima("approve", review_id, "--notes", "checked")
+        self.assertIn("Approved", approved)
+        self.assertIn("Source", self.run_gima("search", "claim", "--category", "research"))
 
 
 if __name__ == "__main__":

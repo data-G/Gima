@@ -91,6 +91,22 @@ In voice mode, say `learn AI-human systems papers to improve Gima`. Gima saves
 the gathered papers and references to `.human-ai/brain/ai-human-systems.md` and
 indexes them as `research/ai-human-systems` memory.
 
+Parent review of learned sources:
+
+```bash
+python3 -m human_ai.gima reviews
+python3 -m human_ai.gima approve review_RECORD_ID --notes "checked against source"
+python3 -m human_ai.gima reject review_RECORD_ID --notes "source was not useful"
+```
+
+Gima stores source judgments in `.human-ai/csv/source_reviews.csv` and parent
+approval events in `.human-ai/csv/parent_approvals.csv`. The parent approval
+password is stored only as a SHA-256 hash in private `config.local.json`; it is
+for approving learned knowledge, not for unlimited machine access.
+
+For scripts, set `GIMA_PARENT_PASSWORD` in the environment instead of typing at
+the prompt.
+
 CSV memory is stored under `.human-ai/csv/`. The SQLite file
 `.human-ai/index.sqlite3` is only a generated search cache. Delete it and run
 `python3 -m human_ai.cli rebuild` at any time.
@@ -362,6 +378,8 @@ Kill phrase: say `End Game`. In normal mode that stops the process. In
   csv/
     knowledge.csv
     conversations.csv
+    source_reviews.csv
+    parent_approvals.csv
     audit.csv
   media/
   index.sqlite3

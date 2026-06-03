@@ -1,4 +1,5 @@
 import json
+import hashlib
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -50,6 +51,13 @@ class PermissionManagerTests(unittest.TestCase):
         self.permissions.grant(["web"], 5)
         self.permissions.revoke()
         self.assertIsNone(self.permissions.current())
+
+    def test_parent_password_uses_hash(self):
+        self.config.parent_approval.password_sha256 = hashlib.sha256(
+            "correct".encode("utf-8")
+        ).hexdigest()
+        self.assertTrue(self.permissions.verify_parent_password("correct"))
+        self.assertFalse(self.permissions.verify_parent_password("wrong"))
 
 
 if __name__ == "__main__":

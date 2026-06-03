@@ -40,6 +40,25 @@ CONVERSATION_FIELDS = [
 
 AUDIT_FIELDS = ["timestamp", "action", "target", "details", "status"]
 
+SOURCE_REVIEW_FIELDS = [
+    "id",
+    "timestamp",
+    "record_id",
+    "title",
+    "source",
+    "category",
+    "subcategory",
+    "claim_summary",
+    "internet_status",
+    "user_status",
+    "parent_status",
+    "review_notes",
+    "approved_by",
+    "approved_at",
+]
+
+PARENT_APPROVAL_FIELDS = ["timestamp", "action", "target", "result", "notes"]
+
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
@@ -86,12 +105,16 @@ class MemoryStore:
         self.knowledge_path = self.csv_dir / "knowledge.csv"
         self.conversations_path = self.csv_dir / "conversations.csv"
         self.audit_path = self.csv_dir / "audit.csv"
+        self.source_reviews_path = self.csv_dir / "source_reviews.csv"
+        self.parent_approvals_path = self.csv_dir / "parent_approvals.csv"
 
     def initialize(self) -> None:
         self.csv_dir.mkdir(parents=True, exist_ok=True)
         self._ensure_csv(self.knowledge_path, RECORD_FIELDS)
         self._ensure_csv(self.conversations_path, CONVERSATION_FIELDS)
         self._ensure_csv(self.audit_path, AUDIT_FIELDS)
+        self._ensure_csv(self.source_reviews_path, SOURCE_REVIEW_FIELDS)
+        self._ensure_csv(self.parent_approvals_path, PARENT_APPROVAL_FIELDS)
         if not self.db_path.exists():
             self.rebuild_index()
 
@@ -237,6 +260,101 @@ class MemoryStore:
         with self.audit_path.open("a", newline="", encoding="utf-8") as handle:
             csv.DictWriter(handle, fieldnames=AUDIT_FIELDS).writerow(row)
 
+    def add_source_review(
+        self,
+        record_id: str,
+        title: str,
+        source: str,
+        category: str,
+        subcategory: str,
+        claim_summary: str,
+        internet_status: str = "imported",
+        user_status: str = "pending",
+        parent_status: str = "pending",
+    ) -> str:
+        self.initialize()
+        row = {
+            "id": f"review_{uuid.uuid4().hex}",
+            "timestamp": now_iso(),
+            "record_id": record_id,
+            "title": title,
+            "source": source,
+            "category": category,
+            "subcategory": subcategory,
+            "claim_summary": claim_summary[:1000],
+            "internet_status": internet_status,
+            "user_status": user_status,
+            "parent_status": parent_status,
+            "review_notes": "",
+            "approved_by": "",
+            "approved_at": "",
+        }
+        with self.source_reviews_path.open("a", newline="", encoding="utf-8") as handle:
+            csv.DictWriter(handle, fieldnames=SOURCE_REVIEW_FIELDS).writerow(row)
+        self.audit("source_review_add", row["id"], source, "ok")
+        return row["id"]
+
+    def list_source_reviews(
+        self, parent_status: str | None = None, limit: int = 50
+    ) -> List[Dict[str, str]]:
+        self.initialize()
+        with self.source_reviews_path.open(newline="", encoding="utf-8") as handle:
+            rows = list(csv.DictReader(handle))
+        if parent_status:
+            rows = [row for row in rows if row["parent_status"] == parent_status]
+        return list(reversed(rows))[: max(1, min(limit, 500))]
+
+    def parent_review_decision(
+        self,
+        review_id: str,
+        decision: str,
+        reviewer: str,
+        notes: str = "",
+    ) -> bool:
+        if decision not in {"approved", "rejected"}:
+            raise ValueError("Decision must be approved or rejected")
+        self.initialize()
+        with self.source_reviews_path.open(newline="", encoding="utf-8") as source:
+            rows = list(csv.DictReader(source))
+        matched: Dict[str, str] | None = None
+        for row in rows:
+            if row["id"] == review_id:
+                row["parent_status"] = decision
+                row["user_status"] = decision
+                row["review_notes"] = notes
+                row["approved_by"] = reviewer
+                row["approved_at"] = now_iso()
+                matched = row
+                break
+        if not matched:
+            self.append_parent_approval("review_decision", review_id, "not_found", notes)
+            return False
+        with tempfile.NamedTemporaryFile(
+            "w", newline="", encoding="utf-8", dir=str(self.csv_dir), delete=False
+        ) as handle:
+            writer = csv.DictWriter(handle, fieldnames=SOURCE_REVIEW_FIELDS)
+            writer.writeheader()
+            writer.writerows(rows)
+            temp_path = Path(handle.name)
+        temp_path.replace(self.source_reviews_path)
+        if matched["record_id"]:
+            self.update_status(matched["record_id"], "active" if decision == "approved" else "archived")
+        self.append_parent_approval("review_decision", review_id, decision, notes)
+        return True
+
+    def append_parent_approval(self, action: str, target: str, result: str, notes: str = "") -> None:
+        self.initialize()
+        row = {
+            "timestamp": now_iso(),
+            "action": action,
+            "target": target,
+            "result": result,
+            "notes": notes,
+        }
+        with self.parent_approvals_path.open("a", newline="", encoding="utf-8") as handle:
+            csv.DictWriter(handle, fieldnames=PARENT_APPROVAL_FIELDS).writerow(row)
+        self.audit("parent_approval", target, f"{action}: {result}", "ok")
+
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(str(self.db_path))
         connection.row_factory = sqlite3.Row
@@ -327,6 +445,8 @@ class MemoryStore:
         self.csv_dir.mkdir(parents=True, exist_ok=True)
         self._ensure_csv(self.knowledge_path, RECORD_FIELDS)
         self._ensure_csv(self.conversations_path, CONVERSATION_FIELDS)
+        self._ensure_csv(self.source_reviews_path, SOURCE_REVIEW_FIELDS)
+        self._ensure_csv(self.parent_approvals_path, PARENT_APPROVAL_FIELDS)
         if self.db_path.exists():
             self.db_path.unlink()
         count = 0

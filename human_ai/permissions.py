@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from dataclasses import asdict, dataclass
@@ -76,3 +77,17 @@ class PermissionManager:
                 f"Permission scope '{scope}' is not active. "
                 f"Run permission-grant from the terminal for a short local session."
             )
+
+    def verify_parent_password(self, password: str) -> bool:
+        expected = self.config.parent_approval.password_sha256
+        if not expected:
+            raise PermissionError("Parent approval password hash is not configured")
+        actual = hashlib.sha256(password.encode("utf-8")).hexdigest()
+        ok = actual == expected
+        self.memory.append_parent_approval(
+            "password_check",
+            "parent_approval",
+            "ok" if ok else "failed",
+            "local parent approval check",
+        )
+        return ok

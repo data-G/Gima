@@ -80,6 +80,14 @@ class Agent:
             status="review",
         )
         record_id = self.memory.add(record)
+        self.memory.add_source_review(
+            record_id,
+            record.title,
+            url,
+            record.category,
+            record.subcategory,
+            text[:1000],
+        )
         self.memory.audit("web_import", url, f"Stored as {record_id} for review", "ok")
         return record_id
 
@@ -108,6 +116,7 @@ class Agent:
             "",
         ]
         source_lines: List[str] = []
+        source_reviews: List[Tuple[str, str]] = []
         for url in profile["sources"]:
             text = importer.fetch(url)
             sections.extend(
@@ -119,6 +128,7 @@ class Agent:
                 ]
             )
             source_lines.append(url)
+            source_reviews.append((url, text[:1000]))
         brain_dir = self.config.resolved_data_dir / "brain"
         brain_dir.mkdir(parents=True, exist_ok=True)
         target = brain_dir / str(profile["file"])
@@ -139,6 +149,17 @@ class Agent:
                 )
             ],
         )
+        rows = self.memory.search(f"{profile['title']} knowledge", category="language", limit=1)
+        record_id = rows[0]["id"] if rows else ""
+        for url, summary in source_reviews:
+            self.memory.add_source_review(
+                record_id,
+                f"{profile['title']} source",
+                url,
+                "language",
+                key,
+                summary,
+            )
         self.memory.audit(
             "language_learn",
             key,
@@ -169,6 +190,7 @@ class Agent:
             "",
         ]
         source_count = 0
+        source_reviews: List[Tuple[str, str]] = []
         for url in profile["sources"]:
             text = importer.fetch(url)
             sections.extend(
@@ -180,6 +202,7 @@ class Agent:
                 ]
             )
             source_count += 1
+            source_reviews.append((url, text[:1000]))
         brain_dir = self.config.resolved_data_dir / "brain"
         brain_dir.mkdir(parents=True, exist_ok=True)
         target = brain_dir / str(profile["file"])
@@ -200,6 +223,17 @@ class Agent:
                 )
             ],
         )
+        rows = self.memory.search(f"{profile['title']} research brain", category="research", limit=1)
+        record_id = rows[0]["id"] if rows else ""
+        for url, summary in source_reviews:
+            self.memory.add_source_review(
+                record_id,
+                f"{profile['title']} research source",
+                url,
+                "research",
+                key,
+                summary,
+            )
         self.memory.audit(
             "research_learn",
             key,
