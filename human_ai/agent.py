@@ -22,6 +22,30 @@ LANGUAGE_LEARNING_SOURCES = {
     }
 }
 
+RESEARCH_LEARNING_SOURCES = {
+    "ai-human-systems": {
+        "title": "AI-Human Systems",
+        "file": "ai-human-systems.md",
+        "keywords": (
+            "AI-human systems human AI collaboration agents memory RAG tool use planning "
+            "GUI agents multimodal assistants safety governance"
+        ),
+        "sources": [
+            "https://arxiv.org/abs/2309.14365",
+            "https://arxiv.org/abs/2401.03428",
+            "https://arxiv.org/abs/2406.05804",
+            "https://arxiv.org/abs/2411.14491",
+            "https://arxiv.org/abs/2412.13501",
+            "https://arxiv.org/abs/2506.09420",
+            "https://arxiv.org/abs/2312.10997",
+            "https://arxiv.org/abs/2405.07437",
+            "https://en.wikipedia.org/wiki/Human-AI_interaction",
+            "https://en.wikipedia.org/wiki/AI_agent",
+            "https://en.wikipedia.org/wiki/Retrieval-augmented_generation",
+        ],
+    }
+}
+
 
 class Agent:
     def __init__(self, config: Config):
@@ -119,6 +143,67 @@ class Agent:
             "language_learn",
             key,
             f"Saved {target} from {len(source_lines)} sources",
+            "ok",
+        )
+        return target
+
+    def learn_research_profile(self, profile_name: str) -> Path:
+        key = profile_name.casefold().strip()
+        profile = RESEARCH_LEARNING_SOURCES.get(key)
+        if not profile:
+            raise ValueError(f"No research learning profile is configured for {profile_name}")
+        importer = WebImporter(self.config.web.allowed_domains)
+        sections: List[str] = [
+            f"# {profile['title']} Research Brain",
+            "",
+            "This file was created by Gima from public research and reference sources.",
+            "Use it to improve Gima's design, but verify details before implementing risky behavior.",
+            "",
+            "## Implementation Themes For Gima",
+            "",
+            "- Retrieval-augmented memory instead of pretending the model learned internally.",
+            "- Planning, tool use, and feedback loops with visible logs.",
+            "- Human-centered control, consent, and review before high-impact actions.",
+            "- GUI/camera/screen perception only with explicit user permission.",
+            "- Evaluation, hallucination checks, and source review before trusting web imports.",
+            "",
+        ]
+        source_count = 0
+        for url in profile["sources"]:
+            text = importer.fetch(url)
+            sections.extend(
+                [
+                    f"## Source: {url}",
+                    "",
+                    text[:25000],
+                    "",
+                ]
+            )
+            source_count += 1
+        brain_dir = self.config.resolved_data_dir / "brain"
+        brain_dir.mkdir(parents=True, exist_ok=True)
+        target = brain_dir / str(profile["file"])
+        target.write_text("\n".join(sections), encoding="utf-8")
+        self.memory.replace_source(
+            str(target),
+            [
+                Record(
+                    category="research",
+                    subcategory=key,
+                    kind="research_brain",
+                    title=f"{profile['title']} research brain",
+                    content=target.read_text(encoding="utf-8")[:100000],
+                    keywords=str(profile["keywords"]),
+                    source=str(target),
+                    confidence="0.70",
+                    status="active",
+                )
+            ],
+        )
+        self.memory.audit(
+            "research_learn",
+            key,
+            f"Saved {target} from {source_count} sources",
             "ok",
         )
         return target

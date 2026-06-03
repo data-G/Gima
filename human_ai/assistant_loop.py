@@ -83,6 +83,14 @@ class LocalAssistant:
                 f"I learned Sinhala from public internet sources, saved it in {path}, and indexed it in language memory. Ask me anything about Sinhala.",
                 "language_learn",
             )
+        if self._is_ai_human_research_request(normalized):
+            self.permissions.require("web")
+            self.terminal_event("ACTION", "learn research: ai-human-systems")
+            path = self.agent.learn_research_profile("ai-human-systems")
+            return AssistantReply(
+                f"I learned AI-human systems research from public papers and sources, saved it in {path}, and indexed it in research memory.",
+                "research_learn",
+            )
         if self._is_web_learn_request(normalized):
             self.permissions.require("web")
             url = self._first_url(text)
@@ -131,6 +139,31 @@ class LocalAssistant:
                 "know about",
             }
         )
+
+    def _is_ai_human_research_request(self, normalized: str) -> bool:
+        has_learn_intent = any(
+            phrase in normalized
+            for phrase in {
+                "learn",
+                "research",
+                "study",
+                "papers",
+                "improve gima",
+            }
+        )
+        has_topic = any(
+            phrase in normalized
+            for phrase in {
+                "ai-human",
+                "ai human",
+                "human-ai",
+                "human ai",
+                "ai agent",
+                "agentic ai",
+                "gima improvement",
+            }
+        )
+        return has_learn_intent and has_topic
 
     def _is_web_learn_request(self, normalized: str) -> bool:
         return any(

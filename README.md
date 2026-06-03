@@ -79,6 +79,18 @@ python3 -m human_ai.gima search "Sinhala alphabet"
 In voice mode, say `learn Sinhala`. Gima saves the gathered knowledge to
 `.human-ai/brain/sinhala.md` and indexes it as `language/sinhala` memory.
 
+Research learning shortcut for improving Gima:
+
+```bash
+printf 'GRANT WEB\n' | python3 -m human_ai.cli --config config.local.json permission-grant --scope web --minutes 10
+python3 -m human_ai.gima learn-research ai-human-systems
+python3 -m human_ai.gima search "agent memory tool use" --category research
+```
+
+In voice mode, say `learn AI-human systems papers to improve Gima`. Gima saves
+the gathered papers and references to `.human-ai/brain/ai-human-systems.md` and
+indexes them as `research/ai-human-systems` memory.
+
 CSV memory is stored under `.human-ai/csv/`. The SQLite file
 `.human-ai/index.sqlite3` is only a generated search cache. Delete it and run
 `python3 -m human_ai.cli rebuild` at any time.
@@ -137,6 +149,11 @@ python3 -m human_ai.cli memory-approve kb_RECORD_ID
 Tool execution is disabled by default. When enabled, the runner accepts only
 configured executable names, uses the configured workspace as its working
 directory, captures output, enforces a timeout, and writes an audit event.
+
+No spoken phrase or password grants unlimited machine ownership. A phrase such
+as `Gima@3152` should not be used as a master unlock. Use scoped terminal grants
+for specific abilities such as `web`, `files`, `camera`, `microphone`, and
+`tools`; every grant expires and is recorded in audit memory.
 
 ## Local Brain
 

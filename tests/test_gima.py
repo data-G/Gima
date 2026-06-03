@@ -62,6 +62,15 @@ class GimaControlCenterTests(unittest.TestCase):
         self.assertIn("sinhala.md", output)
         learn_language.assert_called_once_with("sinhala")
 
+    def test_learn_research_saves_brain_file(self):
+        with patch("human_ai.agent.Agent.learn_research_profile") as learn_research:
+            learn_research.return_value = (
+                Path(self.temp.name) / ".human-ai" / "brain" / "ai-human-systems.md"
+            )
+            output = self.run_gima("learn-research", "ai-human-systems")
+        self.assertIn("ai-human-systems.md", output)
+        learn_research.assert_called_once_with("ai-human-systems")
+
 
 if __name__ == "__main__":
     unittest.main()

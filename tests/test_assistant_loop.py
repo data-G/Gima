@@ -94,6 +94,19 @@ class LocalAssistantTests(unittest.TestCase):
         self.assertIn("Sinhala", reply.message)
         self.assertIn("sinhala.md", reply.message)
 
+    def test_voice_can_learn_ai_human_research(self):
+        assistant = self.make_assistant()
+        assistant.config.permissions.require_scoped_grants = False
+        with patch.object(
+            assistant.agent,
+            "learn_research_profile",
+            return_value=Path("/tmp/ai-human-systems.md"),
+        ):
+            reply = assistant.run_text_command("learn AI-human systems papers to improve Gima")
+        self.assertEqual(reply.action, "research_learn")
+        self.assertIn("AI-human systems", reply.message)
+        self.assertIn("ai-human-systems.md", reply.message)
+
 
 if __name__ == "__main__":
     unittest.main()
