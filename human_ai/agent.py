@@ -11,6 +11,7 @@ from .heart import HeartStore
 from .memory import MemoryStore, Record, now_iso
 from .readers import iter_files, read_file
 from .services import LocalModel, TeacherModelClient, WebImporter
+from .violations import ViolationReporter
 
 
 LANGUAGE_LEARNING_SOURCES = {
@@ -67,6 +68,7 @@ class Agent:
         self.model = LocalModel(config)
         self.heart = HeartStore(config.resolved_data_dir, self.memory)
         self.heart.initialize()
+        self.violations = ViolationReporter(config.resolved_data_dir, self.memory)
         self.teacher_models = TeacherModelClient(config)
         self.session_id = uuid.uuid4().hex
 
@@ -455,6 +457,15 @@ class Agent:
 
     def chat(self, message: str) -> str:
         self.memory.append_conversation(self.session_id, "user", message)
+        violation_reason = self.detect_heart_violation_attempt(message)
+        if violation_reason:
+            report_path = self.violations.create_report(violation_reason, message, "chat")
+            answer = (
+                "I cannot do that because it conflicts with Gima heart policies. "
+                f"I logged the violation attempt for parent review at {report_path}."
+            )
+            self.memory.append_conversation(self.session_id, "assistant", answer)
+            return answer
         matches = self.search(message, limit=6)
         context = "\n\n".join(
             f"[{row['id']}] {row['title']}\n{row['content'][:1200]}" for row in matches
@@ -486,3 +497,34 @@ class Agent:
             )
         self.memory.append_conversation(self.session_id, "assistant", answer)
         return answer
+
+    def detect_heart_violation_attempt(self, message: str) -> str:
+        normalized = " ".join(message.casefold().split())
+        has_heart_target = any(
+            phrase in normalized
+            for phrase in {
+                "heart policy",
+                "heart policies",
+                "gima heart",
+                "policy",
+                "policies",
+                "safeguard",
+                "safety rule",
+            }
+        )
+        has_bypass_intent = any(
+            phrase in normalized
+            for phrase in {
+                "bypass",
+                "ignore",
+                "override",
+                "disable",
+                "violate",
+                "break",
+                "skip all",
+                "turn off",
+            }
+        )
+        if has_heart_target and has_bypass_intent:
+            return "Request attempted to bypass, ignore, disable, or violate Gima heart policies"
+        return ""

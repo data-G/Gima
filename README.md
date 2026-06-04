@@ -138,6 +138,16 @@ Scaling Policy, Google AI Principles, Microsoft Responsible AI principles, and
 IBM AI ethics/trust guidance. These summaries are pending until the parent user
 approves them.
 
+Heart violation attempts are blocked, logged under `.human-ai/violations/`, and
+can be emailed to the configured parent address:
+
+```bash
+python3 -m human_ai.gima violation-report "heart bypass attempt" "someone tried to ignore policies"
+```
+
+The default recipient is `gimkan@gmail.com`; email delivery uses the macOS Mail
+app and does not store an email password.
+
 Teacher model knowledge transfer:
 
 ```bash

@@ -142,6 +142,12 @@ def parser() -> argparse.ArgumentParser:
     heart_review = commands.add_parser("heart-review", help="Approve or skip pending heart policies one at a time")
     heart_review.add_argument("--password", help="Parent password. Prefer GIMA_PARENT_PASSWORD for scripts.")
 
+    violation = commands.add_parser("violation-report", help="Email a Gima heart violation report")
+    violation.add_argument("reason")
+    violation.add_argument("request", nargs="+")
+    violation.add_argument("--to", default=None)
+    violation.add_argument("--source", default="manual")
+
     commands.add_parser("doctor", help="Show optional local capabilities")
     return root
 
@@ -465,6 +471,10 @@ def main(argv=None) -> int:
         elif args.command == "heart-review":
             reviewer = _require_parent(agent, permissions, args.password)
             return _heart_review(agent, reviewer)
+        elif args.command == "violation-report":
+            recipient = args.to or config.violations.email_to
+            report = agent.violations.report(recipient, args.reason, " ".join(args.request), args.source)
+            print(f"Sent violation report to {report.recipient}: {report.report_path}")
     except Exception as error:
         print(f"error: {error}", file=sys.stderr)
         return 1

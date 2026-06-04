@@ -79,6 +79,11 @@ class ParentApprovalConfig:
 
 
 @dataclass
+class ViolationConfig:
+    email_to: str = "gimkan@gmail.com"
+
+
+@dataclass
 class TeacherModelsConfig:
     openai_model: str = "gpt-4o-mini"
     gemini_model: str = "gemini-2.5-flash"
@@ -111,6 +116,7 @@ class Config:
     vision: VisionConfig = field(default_factory=VisionConfig)
     permissions: PermissionConfig = field(default_factory=PermissionConfig)
     parent_approval: ParentApprovalConfig = field(default_factory=ParentApprovalConfig)
+    violations: ViolationConfig = field(default_factory=ViolationConfig)
     teacher_models: TeacherModelsConfig = field(default_factory=TeacherModelsConfig)
     daily_learning: DailyLearningConfig = field(default_factory=DailyLearningConfig)
 
