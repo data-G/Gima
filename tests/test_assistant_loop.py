@@ -107,6 +107,20 @@ class LocalAssistantTests(unittest.TestCase):
         self.assertIn("AI-human systems", reply.message)
         self.assertIn("ai-human-systems.md", reply.message)
 
+    def test_voice_can_learn_video_generation_research(self):
+        assistant = self.make_assistant()
+        assistant.config.permissions.require_scoped_grants = False
+        with patch.object(
+            assistant.agent,
+            "learn_research_profile",
+            return_value=Path("/tmp/video-generation.md"),
+        ) as learn_research:
+            reply = assistant.run_text_command("learn video generation")
+        self.assertEqual(reply.action, "research_learn")
+        self.assertIn("video generation", reply.message)
+        self.assertIn("video-generation.md", reply.message)
+        learn_research.assert_called_once_with("video-generation")
+
     def test_voice_can_ask_chatgpt_teacher(self):
         assistant = self.make_assistant()
         assistant.config.permissions.require_scoped_grants = False

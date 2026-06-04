@@ -84,12 +84,17 @@ Research learning shortcut for improving Gima:
 ```bash
 printf 'GRANT WEB\n' | python3 -m human_ai.cli --config config.local.json permission-grant --scope web --minutes 10
 python3 -m human_ai.gima learn-research ai-human-systems
+python3 -m human_ai.gima learn-research video-generation
 python3 -m human_ai.gima search "agent memory tool use" --category research
 ```
 
 In voice mode, say `learn AI-human systems papers to improve Gima`. Gima saves
 the gathered papers and references to `.human-ai/brain/ai-human-systems.md` and
 indexes them as `research/ai-human-systems` memory.
+
+In voice mode, say `learn video generation`. Gima saves public papers and model
+references to `.human-ai/brain/video-generation.md` and indexes them as
+`research/video-generation` memory.
 
 Parent review of learned sources:
 

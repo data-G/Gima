@@ -76,6 +76,34 @@ class GimaControlCenterTests(unittest.TestCase):
         self.assertIn("ai-human-systems.md", output)
         learn_research.assert_called_once_with("ai-human-systems")
 
+    def test_learn_video_generation_saves_brain_file(self):
+        with patch("human_ai.agent.Agent.learn_research_profile") as learn_research:
+            learn_research.return_value = (
+                Path(self.temp.name) / ".human-ai" / "brain" / "video-generation.md"
+            )
+            output = self.run_gima("learn-research", "video-generation")
+        self.assertIn("video-generation.md", output)
+        learn_research.assert_called_once_with("video-generation")
+
+    def test_learn_research_skips_blocked_sources(self):
+        from human_ai.agent import Agent
+        from human_ai.config import load_config
+
+        agent = Agent(load_config(str(self.config_path)))
+
+        def fake_fetch(url):
+            if "arxiv.org" in url:
+                return "video diffusion source text"
+            raise RuntimeError("blocked")
+
+        with patch("human_ai.agent.WebImporter.fetch", side_effect=fake_fetch):
+            path = agent.learn_research_profile("video-generation")
+
+        text = path.read_text(encoding="utf-8")
+        self.assertIn("video diffusion source text", text)
+        self.assertIn("Sources Not Imported", text)
+        self.assertIn("blocked", text)
+
     def test_reviews_and_parent_approval(self):
         from human_ai.agent import Agent
         from human_ai.config import load_config

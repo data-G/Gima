@@ -47,6 +47,25 @@ RESEARCH_LEARNING_SOURCES = {
             "https://en.wikipedia.org/wiki/AI_agent",
             "https://en.wikipedia.org/wiki/Retrieval-augmented_generation",
         ],
+    },
+    "video-generation": {
+        "title": "Video Generation",
+        "file": "video-generation.md",
+        "keywords": (
+            "AI video generation text-to-video image-to-video video diffusion models "
+            "temporal consistency motion control storyboard safety provenance watermarking"
+        ),
+        "sources": [
+            "https://arxiv.org/abs/2405.03150",
+            "https://arxiv.org/abs/2311.15127",
+            "https://arxiv.org/abs/2312.14125",
+            "https://openai.com/index/sora-system-card/",
+            "https://deepmind.google/technologies/veo/",
+            "https://stability.ai/news-updates/stable-video-diffusion-open-ai-video-model",
+            "https://runwayml.com/research/introducing-gen-3-alpha",
+            "https://research.google/pubs/videopoet-a-large-language-model-for-zero-shot-video-generation/",
+            "https://en.wikipedia.org/wiki/Text-to-video_model",
+        ],
     }
 }
 
@@ -208,8 +227,14 @@ class Agent:
         ]
         source_count = 0
         source_reviews: List[Tuple[str, str]] = []
+        failed_sources: List[Tuple[str, str]] = []
         for url in profile["sources"]:
-            text = importer.fetch(url)
+            try:
+                text = importer.fetch(url)
+            except Exception as error:
+                failed_sources.append((url, str(error)))
+                self.memory.audit("research_learn_source", url, str(error), "error")
+                continue
             sections.extend(
                 [
                     f"## Source: {url}",
@@ -220,6 +245,10 @@ class Agent:
             )
             source_count += 1
             source_reviews.append((url, text[:1000]))
+        if failed_sources:
+            sections.extend(["## Sources Not Imported", ""])
+            for url, error in failed_sources:
+                sections.extend([f"- {url}: {error}", ""])
         brain_dir = self.config.resolved_data_dir / "brain"
         brain_dir.mkdir(parents=True, exist_ok=True)
         target = brain_dir / str(profile["file"])

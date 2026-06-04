@@ -103,6 +103,14 @@ class LocalAssistant:
                 f"I learned AI-human systems research from public papers and sources, saved it in {path}, and indexed it in research memory.",
                 "research_learn",
             )
+        if self._is_video_generation_research_request(normalized):
+            self.permissions.require("web")
+            self.terminal_event("ACTION", "learn research: video-generation")
+            path = self.agent.learn_research_profile("video-generation")
+            return AssistantReply(
+                f"I learned video generation research from public papers and sources, saved it in {path}, and indexed it in research memory.",
+                "research_learn",
+            )
         if self._is_web_learn_request(normalized):
             self.permissions.require("web")
             url = self._first_url(text)
@@ -173,6 +181,32 @@ class LocalAssistant:
                 "ai agent",
                 "agentic ai",
                 "gima improvement",
+            }
+        )
+        return has_learn_intent and has_topic
+
+    def _is_video_generation_research_request(self, normalized: str) -> bool:
+        has_learn_intent = any(
+            phrase in normalized
+            for phrase in {
+                "learn",
+                "research",
+                "study",
+                "papers",
+                "know about",
+            }
+        )
+        has_topic = any(
+            phrase in normalized
+            for phrase in {
+                "video generation",
+                "text to video",
+                "text-to-video",
+                "image to video",
+                "image-to-video",
+                "video diffusion",
+                "ai video",
+                "generative video",
             }
         )
         return has_learn_intent and has_topic
