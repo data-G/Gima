@@ -41,6 +41,30 @@ class LocalAssistantTests(unittest.TestCase):
             or "local tools are available" in reply.message.casefold()
         )
 
+    def test_language_switch_requires_explicit_permission(self):
+        assistant = self.make_assistant()
+        reply = assistant.run_text_command("speak Japanese")
+        self.assertEqual(reply.action, "language_lock")
+        self.assertIn("stay in English", reply.message)
+        self.assertEqual(assistant.response_language, "English")
+
+    def test_language_switch_with_permission_changes_terminal_session(self):
+        assistant = self.make_assistant()
+        reply = assistant.run_text_command("I approve switching language to Japanese")
+        self.assertEqual(reply.action, "language_switch")
+        self.assertIn("Japanese", reply.message)
+        self.assertEqual(assistant.response_language, "Japanese")
+
+    def test_chat_fallback_uses_terminal_language_lock(self):
+        assistant = self.make_assistant()
+        with patch.object(assistant.agent, "chat", return_value="locked answer") as chat:
+            reply = assistant.run_text_command("はい")
+        self.assertEqual(reply.action, "chat")
+        self.assertEqual(reply.message, "locked answer")
+        sent = chat.call_args.args[0]
+        self.assertIn("reply only in English", sent)
+        self.assertIn("User message: はい", sent)
+
     def test_memory_search_reads_local_memory(self):
         assistant = self.make_assistant()
         assistant.agent.memory.add(

@@ -32,6 +32,7 @@ class LocalAssistant:
         self.config = agent.config
         self.permissions = PermissionManager(self.config, agent.memory)
         self.voice = Voice()
+        self.response_language = "English"
 
     def terminal_event(self, event: str, detail: str = "") -> None:
         timestamp = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
@@ -45,6 +46,18 @@ class LocalAssistant:
             return AssistantReply("I did not hear a command.", "empty")
         if self.is_end_phrase(normalized) or normalized in {"stop", "exit", "quit", "goodbye", "sleep"}:
             return AssistantReply("Okay. I am going back to sleep.", "stop")
+        language_switch = self._language_switch_request(text, normalized)
+        if language_switch:
+            self.response_language = language_switch
+            return AssistantReply(
+                f"Approved. I will use {self.response_language} in this terminal session.",
+                "language_switch",
+            )
+        if self._looks_like_language_switch_without_permission(normalized):
+            return AssistantReply(
+                f"I will stay in {self.response_language}. To switch, say: I approve switching language to English, Sinhala, or Japanese.",
+                "language_lock",
+            )
         if "time" in normalized:
             return AssistantReply(f"It is {datetime.now().astimezone().strftime('%H:%M on %A, %B %d')}.")
         if "doctor" in normalized or "status" in normalized:
@@ -155,7 +168,51 @@ class LocalAssistant:
             titles = "; ".join(row["title"] for row in rows)
             return AssistantReply(f"I found these local memories: {titles}.")
         self.terminal_event("ACTION", "chat fallback")
-        return AssistantReply(self.agent.chat(text), "chat")
+        return AssistantReply(self.agent.chat(self._language_locked_message(text)), "chat")
+
+    def _language_locked_message(self, text: str) -> str:
+        return "\n\n".join(
+            [
+                f"Terminal language lock: reply only in {self.response_language}.",
+                "Do not switch language just because the user transcript is in another language.",
+                "If the user wants another language, they must explicitly approve a language switch in this terminal session.",
+                f"User message: {text}",
+            ]
+        )
+
+    def _language_switch_request(self, text: str, normalized: str) -> str:
+        if not any(word in normalized for word in {"approve", "approved", "allow", "permission", "permit"}):
+            return ""
+        if not any(
+            phrase in normalized
+            for phrase in {"switch language", "switching language", "change language", "use language"}
+        ):
+            return ""
+        for name in {"english", "sinhala", "japanese"}:
+            if name in normalized:
+                return name.title()
+        if "日本語" in text:
+            return "Japanese"
+        if "සිංහල" in text:
+            return "Sinhala"
+        return ""
+
+    def _looks_like_language_switch_without_permission(self, normalized: str) -> bool:
+        has_switch = any(
+            phrase in normalized
+            for phrase in {
+                "switch language",
+                "change language",
+                "use japanese",
+                "speak japanese",
+                "use sinhala",
+                "speak sinhala",
+                "use english",
+                "speak english",
+            }
+        )
+        has_permission = any(word in normalized for word in {"approve", "approved", "allow", "permission", "permit"})
+        return has_switch and not has_permission
 
     def _is_language_learn_request(self, normalized: str, language: str) -> bool:
         return language in normalized and any(
