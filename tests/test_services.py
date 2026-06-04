@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 from human_ai.config import Config
 from human_ai.memory import MemoryStore
-from human_ai.services import SafeToolRunner, TeacherModelClient, WebImporter
+from human_ai.services import LipSyncPlanner, SafeToolRunner, TeacherModelClient, WebImporter
 
 
 class ServiceSafetyTests(unittest.TestCase):
@@ -62,6 +62,35 @@ class ServiceSafetyTests(unittest.TestCase):
                 b'{"candidates":[{"content":{"parts":[{"text":"gemini answer"}]}}]}'
             )
             self.assertEqual(client.ask("gemini", "hello"), "gemini answer")
+
+    def test_lip_sync_planner_requires_consent(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            audio = root / "song.mp3"
+            face = root / "face.jpg"
+            audio.write_bytes(b"fake mp3")
+            face.write_bytes(b"fake jpg")
+            with self.assertRaises(PermissionError):
+                LipSyncPlanner(root / "out").create_project(audio, face, "sing", consent=False)
+
+    def test_lip_sync_planner_creates_manifest(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            audio = root / "song.mp3"
+            face = root / "face.jpg"
+            audio.write_bytes(b"fake mp3")
+            face.write_bytes(b"fake jpg")
+            project = LipSyncPlanner(root / "out").create_project(
+                audio,
+                face,
+                "make a respectful lip sync performance",
+                consent=True,
+            )
+            self.assertTrue(project.manifest_path.exists())
+            text = project.manifest_path.read_text(encoding="utf-8")
+            self.assertIn("make a respectful lip sync performance", text)
+            self.assertIn(str(audio.resolve()), text)
+            self.assertIn(str(face.resolve()), text)
 
 
 if __name__ == "__main__":

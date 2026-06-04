@@ -352,6 +352,17 @@ python3 -m human_ai.cli video-analyze recording.mp4 --seconds 10
 python3 -m human_ai.cli transcribe recording.wav --model /path/to/ggml-base.en.bin
 ```
 
+One-prompt lip-sync project planning:
+
+```bash
+python3 -m human_ai.cli lip-sync-plan song.mp3 --face consented_face.jpg --prompt "cinematic close-up, sing naturally with warm stage lighting" --consent
+```
+
+This creates a project under `.human-ai/media/lip_sync/` with `manifest.json`,
+`prompt.txt`, and `safety.txt`. It does not impersonate anyone or generate the
+final video by itself; connect a consent-safe lip-sync generator later using the
+manifest.
+
 The monitor is deliberately bounded. Continuous background observation should
 be added later with visible recording status, retention rules, and an event
 detector that discards unchanged frames.

@@ -15,6 +15,7 @@ from .permissions import ALLOWED_SCOPES, PermissionManager
 from .readers import read_file
 from .scene import LocalPersonDetector, save_observation
 from .services import (
+    LipSyncPlanner,
     MediaAnalyzer,
     MediaCapture,
     SafeToolRunner,
@@ -104,6 +105,16 @@ def parser() -> argparse.ArgumentParser:
     transcribe = commands.add_parser("transcribe", help="Transcribe audio or video with whisper.cpp")
     transcribe.add_argument("path")
     transcribe.add_argument("--model", required=True, help="Path to a whisper.cpp model")
+
+    lip_sync = commands.add_parser("lip-sync-plan", help="Create a one-prompt lip-sync project manifest")
+    lip_sync.add_argument("audio", help="MP3 or other local audio file")
+    lip_sync.add_argument("--face", required=True, help="Consented face image or video")
+    lip_sync.add_argument("--prompt", required=True, help="One natural-language prompt for the desired result")
+    lip_sync.add_argument(
+        "--consent",
+        action="store_true",
+        help="Confirm you have rights/consent for the face/person and audio",
+    )
 
     wake = commands.add_parser("wake", help="Process a transcript for the configured wake word")
     wake.add_argument("transcript", help="Speech transcript from any language")
@@ -292,6 +303,29 @@ def main(argv=None) -> int:
                 )
             )
             print(f"Stored transcript as {record_id}")
+        elif args.command == "lip-sync-plan":
+            permissions.require("files")
+            project = LipSyncPlanner(config.resolved_data_dir / "media" / "lip_sync").create_project(
+                Path(args.audio),
+                Path(args.face),
+                args.prompt,
+                consent=args.consent,
+            )
+            record_id = agent.memory.add(
+                Record(
+                    category="video",
+                    subcategory="lip_sync_plan",
+                    kind="generation_plan",
+                    title=f"Lip-sync plan: {Path(args.audio).name}",
+                    content=project.manifest_path.read_text(encoding="utf-8"),
+                    source=str(project.manifest_path),
+                    media_path=str(project.project_dir),
+                    status="review",
+                )
+            )
+            print(f"Created lip-sync project: {project.project_dir}")
+            print(f"Manifest: {project.manifest_path}")
+            print(f"Stored plan as {record_id}")
         elif args.command == "wake":
             result = WakeAssistant(config, agent.memory).respond(
                 args.transcript, capture_photo=args.capture_photo

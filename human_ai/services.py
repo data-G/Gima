@@ -11,6 +11,8 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
+from dataclasses import dataclass
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Dict, Iterable, List
@@ -381,6 +383,99 @@ class MediaAnalyzer:
             timeout=max(20, seconds + 15),
         )
         return target
+
+
+@dataclass
+class LipSyncProject:
+    project_dir: Path
+    manifest_path: Path
+    prompt_path: Path
+    safety_path: Path
+
+
+class LipSyncPlanner:
+    def __init__(self, output_dir: Path):
+        self.output_dir = output_dir
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+
+    def create_project(
+        self,
+        audio: Path,
+        face: Path,
+        prompt: str,
+        consent: bool = False,
+    ) -> LipSyncProject:
+        audio_path = audio.expanduser().resolve()
+        face_path = face.expanduser().resolve()
+        if not consent:
+            raise PermissionError("Lip sync planning requires --consent for the face/person and audio rights")
+        if not audio_path.exists():
+            raise FileNotFoundError(f"Audio file does not exist: {audio_path}")
+        if not face_path.exists():
+            raise FileNotFoundError(f"Face image/video does not exist: {face_path}")
+        if audio_path.suffix.casefold() not in {".mp3", ".wav", ".m4a", ".flac", ".aac", ".ogg"}:
+            raise ValueError("Audio must be an MP3 or another supported audio file")
+        if face_path.suffix.casefold() not in {".jpg", ".jpeg", ".png", ".webp", ".mp4", ".mov", ".m4v"}:
+            raise ValueError("Face source must be an image or video file")
+
+        project_dir = self.output_dir / f"lip_sync_{uuid.uuid4().hex[:12]}"
+        project_dir.mkdir(parents=True, exist_ok=True)
+        prompt_path = project_dir / "prompt.txt"
+        safety_path = project_dir / "safety.txt"
+        manifest_path = project_dir / "manifest.json"
+        prompt_path.write_text(prompt.strip() + "\n", encoding="utf-8")
+        safety_path.write_text(
+            "\n".join(
+                [
+                    "Lip-sync safety rules",
+                    "",
+                    "- Use only faces/voices/audio you own or have permission to use.",
+                    "- Do not impersonate a real person without clear consent.",
+                    "- Label generated media as AI-assisted or synthetic when shared.",
+                    "- Do not use this workflow for harassment, fraud, sexual content, or deception.",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        manifest = {
+            "audio": str(audio_path),
+            "face": str(face_path),
+            "prompt": prompt,
+            "audio_metadata": self._media_metadata(audio_path),
+            "face_metadata": self._media_metadata(face_path),
+            "output_hint": str(project_dir / "output_lip_sync.mp4"),
+            "status": "planned",
+            "next_step": (
+                "Install or configure a consent-safe lip-sync generator, then use this manifest as input."
+            ),
+        }
+        manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        return LipSyncProject(project_dir, manifest_path, prompt_path, safety_path)
+
+    def _media_metadata(self, path: Path) -> Dict[str, object]:
+        if not shutil.which("ffprobe"):
+            return {"path": str(path), "ffprobe": "unavailable"}
+        try:
+            result = subprocess.run(
+                [
+                    "ffprobe",
+                    "-v",
+                    "error",
+                    "-show_entries",
+                    "format=duration,format_name,size",
+                    "-of",
+                    "json",
+                    str(path),
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            return json.loads(result.stdout or "{}")
+        except Exception as error:
+            return {"path": str(path), "error": str(error)}
 
 
 def monitor_camera(
