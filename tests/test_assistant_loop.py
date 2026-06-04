@@ -37,7 +37,11 @@ class LocalAssistantTests(unittest.TestCase):
     def test_voice_cleanup_corrects_common_transcript_errors(self):
         self.assertEqual(clean_voice_transcript("and game"), "end game")
         self.assertEqual(clean_voice_transcript("yeah"), "yes")
+        self.assertEqual(clean_voice_transcript("Yes."), "yes")
+        self.assertEqual(clean_voice_transcript("Yes. Yes."), "yes")
         self.assertEqual(clean_voice_transcript("[Music]"), "")
+        self.assertEqual(clean_voice_transcript("[BLANK_AUDIO]"), "")
+        self.assertEqual(clean_voice_transcript("[MUSIC PLAYING]"), "")
         self.assertEqual(clean_voice_transcript("thanks for watching"), "")
 
     def test_status_command_reports_tools(self):
@@ -97,7 +101,7 @@ class LocalAssistantTests(unittest.TestCase):
         assistant = self.make_assistant()
         assistant.run_text_command("update Gima add a better memory feature")
 
-        approved = assistant.run_text_command("yeah")
+        approved = assistant.run_text_command("Yes. Yes.")
 
         self.assertEqual(approved.action, "self_update_ready")
 

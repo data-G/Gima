@@ -35,6 +35,8 @@ FILLER_TRANSCRIPTS = {
     "subtitle",
     "subtitles",
     "music",
+    "music playing",
+    "blank audio",
     "silence",
 }
 
@@ -58,6 +60,11 @@ VOICE_CORRECTIONS = {
 
 
 def clean_voice_transcript(text: str) -> str:
+    bracket_phrases = re.findall(r"[\[\(]([^\]\)]+)[\]\)]", text)
+    if bracket_phrases and not re.sub(r"[\[\(][^\]\)]+[\]\)]", " ", text).strip():
+        bracket_text = normalize_speech(" ".join(bracket_phrases))
+        if bracket_text in FILLER_TRANSCRIPTS:
+            return ""
     cleaned = re.sub(r"\[[^\]]+\]|\([^\)]+\)", " ", text)
     cleaned = " ".join(cleaned.strip().split())
     if not cleaned:
@@ -70,6 +77,11 @@ def clean_voice_transcript(text: str) -> str:
         corrected = re.sub(rf"\b{re.escape(wrong)}\b", right, corrected)
     if corrected in {"yes", "no", "end game", "gima"}:
         return corrected
+    tokens = corrected.split()
+    if tokens and all(token == "yes" for token in tokens):
+        return "yes"
+    if tokens and all(token == "no" for token in tokens):
+        return "no"
     return cleaned
 
 
