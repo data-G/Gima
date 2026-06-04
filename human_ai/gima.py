@@ -15,6 +15,7 @@ from .brain import BrainServer
 from .config import load_config
 from .memory import Record
 from .permissions import PermissionManager
+from .secrets import SECRET_ENV_KEYS, configure_teacher_secrets, load_secret_env, secrets_env_path
 from .services import dependency_report
 from .world_checklist import build_world_checklist, format_world_checklist
 
@@ -88,6 +89,10 @@ def parser() -> argparse.ArgumentParser:
     teacher = commands.add_parser("teacher", help="Ask ChatGPT/OpenAI or Gemini and save the answer for review")
     teacher.add_argument("provider", choices=["chatgpt", "openai", "gemini"])
     teacher.add_argument("prompt", nargs="+")
+
+    teacher_setup = commands.add_parser("teacher-setup", help="Store private API keys for teacher models")
+    teacher_setup.add_argument("--provider", action="append", choices=["openai", "chatgpt", "gemini", "all"])
+    teacher_setup.add_argument("--force", action="store_true", help="Replace an existing stored key")
 
     transfer = commands.add_parser("transfer-knowledge", help="Ask teacher models and save knowledge for review")
     transfer.add_argument("prompt", nargs="+")
@@ -297,6 +302,18 @@ def _print_ai_providers(agent: Agent) -> None:
     for row in agent.list_ai_providers():
         marker = "ready" if row["available"] == "yes" else "missing"
         print(f"- {row['provider']}: {row['name']} [{marker}] {row['detail']}")
+    print(f"Teacher secrets file: {secrets_env_path(agent.config.resolved_workspace)}")
+
+
+def _teacher_setup_providers(values: list[str] | None) -> list[str]:
+    if not values or "all" in values:
+        return ["openai", "gemini"]
+    providers: list[str] = []
+    for value in values:
+        provider = "openai" if value == "chatgpt" else value
+        if provider not in providers:
+            providers.append(provider)
+    return providers
 
 
 def _schedule_daily_learning(args, config_path: str | None, config) -> Path:
@@ -324,6 +341,7 @@ def _schedule_daily_learning(args, config_path: str | None, config) -> Path:
         "source /etc/zprofile 2>/dev/null || true; "
         "source ~/.zprofile 2>/dev/null || true; "
         "source ~/.zshrc 2>/dev/null || true; "
+        f"source {str(secrets_env_path(config.resolved_workspace))!r} 2>/dev/null || true; "
         f"cd {str(config.resolved_workspace)!r} && "
         + " ".join(_shell_quote(part) for part in command)
     )
@@ -350,6 +368,7 @@ def _shell_quote(value: str) -> str:
 def main(argv=None) -> int:
     args = parser().parse_args(argv)
     config = load_config(args.config)
+    load_secret_env(config.resolved_workspace)
     agent = Agent(config)
     brain = BrainServer(config, agent.memory)
     permissions = PermissionManager(config, agent.memory)
@@ -424,6 +443,12 @@ def main(argv=None) -> int:
             permissions.require("web")
             answer = agent.ask_teacher(args.provider, " ".join(args.prompt))
             print(answer)
+        elif args.command == "teacher-setup":
+            providers = _teacher_setup_providers(args.provider)
+            path = configure_teacher_secrets(config.resolved_workspace, providers, args.force)
+            configured = ", ".join(SECRET_ENV_KEYS[provider] for provider in providers)
+            print(f"Stored teacher secret setting(s): {configured}")
+            print(f"Private secrets file: {path}")
         elif args.command == "transfer-knowledge":
             permissions.require("web")
             providers = ["chatgpt", "gemini"] if args.provider == "both" else (_teacher_providers([args.provider]) or ["local", "chatgpt", "gemini"])

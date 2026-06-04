@@ -156,8 +156,7 @@ app and does not store an email password.
 Teacher model knowledge transfer:
 
 ```bash
-export OPENAI_API_KEY="..."
-export GEMINI_API_KEY="..."
+python3 -m human_ai.gima teacher-setup --provider all
 printf 'GRANT WEB\n' | python3 -m human_ai.cli --config config.local.json permission-grant --scope web --minutes 10
 python3 -m human_ai.gima teacher chatgpt "What should Gima learn about agent memory?"
 python3 -m human_ai.gima teacher gemini "How should Gima interact with camera observations?"
@@ -181,6 +180,10 @@ List all AI providers configured in Gima:
 python3 -m human_ai.gima ai-list
 ```
 
+`teacher-setup` stores keys in `.human-ai/secrets.env`, which is local runtime
+state ignored by git. Gima loads this private file automatically before
+checking providers or running teacher learning.
+
 Run one bounded daily learning session from the available providers:
 
 ```bash
@@ -196,9 +199,9 @@ python3 -m human_ai.gima schedule-daily-learning --hour 2 --minute 0 --minutes 6
 
 The schedule uses LaunchAgent `com.gima.daily-ai-learning`, appends each learned
 lesson to `.human-ai/brain/teacher-learnings/`, and writes logs under
-`.human-ai/logs/`. It loads API keys from your shell files, so keep
-`OPENAI_API_KEY` and `GEMINI_API_KEY` in `~/.zprofile` or `~/.zshrc` if you want
-scheduled ChatGPT/Gemini learning to run unattended.
+`.human-ai/logs/`. It loads API keys from your shell files and from
+`.human-ai/secrets.env`, so `teacher-setup` is enough for scheduled
+ChatGPT/Gemini learning to run unattended.
 
 CSV memory is stored under `.human-ai/csv/`. The SQLite file
 `.human-ai/index.sqlite3` is only a generated search cache. Delete it and run

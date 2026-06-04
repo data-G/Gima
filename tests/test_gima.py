@@ -202,6 +202,26 @@ class GimaControlCenterTests(unittest.TestCase):
         self.assertIn("local", output)
         self.assertIn("chatgpt", output)
         self.assertIn("gemini", output)
+        self.assertIn("Teacher secrets file:", output)
+
+    def test_teacher_setup_writes_private_env_file(self):
+        with patch("getpass.getpass", side_effect=["openai-test", "gemini-test"]):
+            output = self.run_gima("teacher-setup", "--provider", "all")
+        self.assertIn("Stored teacher secret setting", output)
+        secrets = Path(self.temp.name) / ".human-ai" / "secrets.env"
+        self.assertTrue(secrets.exists())
+        text = secrets.read_text(encoding="utf-8")
+        self.assertIn("OPENAI_API_KEY='openai-test'", text)
+        self.assertIn("GEMINI_API_KEY='gemini-test'", text)
+
+    def test_ai_list_loads_private_env_file(self):
+        secrets = Path(self.temp.name) / ".human-ai" / "secrets.env"
+        secrets.parent.mkdir(parents=True, exist_ok=True)
+        secrets.write_text("OPENAI_API_KEY='openai-test'\nGEMINI_API_KEY='gemini-test'\n", encoding="utf-8")
+        with patch.dict("os.environ", {}, clear=True):
+            output = self.run_gima("ai-list")
+        self.assertIn("chatgpt: ChatGPT / OpenAI [ready]", output)
+        self.assertIn("gemini: Google Gemini [ready]", output)
 
     def test_world_checklist_prints_frontier_roadmap(self):
         with patch("human_ai.gima.BrainServer.status") as status:
