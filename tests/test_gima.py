@@ -85,6 +85,15 @@ class GimaControlCenterTests(unittest.TestCase):
         self.assertIn("video-generation.md", output)
         learn_research.assert_called_once_with("video-generation")
 
+    def test_learn_frontier_ai_systems_saves_brain_file(self):
+        with patch("human_ai.agent.Agent.learn_research_profile") as learn_research:
+            learn_research.return_value = (
+                Path(self.temp.name) / ".human-ai" / "brain" / "frontier-ai-systems.md"
+            )
+            output = self.run_gima("learn-research", "frontier-ai-systems")
+        self.assertIn("frontier-ai-systems.md", output)
+        learn_research.assert_called_once_with("frontier-ai-systems")
+
     def test_learn_research_skips_blocked_sources(self):
         from human_ai.agent import Agent
         from human_ai.config import load_config

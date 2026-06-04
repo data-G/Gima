@@ -95,6 +95,14 @@ class LocalAssistant:
                 f"I learned Sinhala from public internet sources, saved it in {path}, and indexed it in language memory. Ask me anything about Sinhala.",
                 "language_learn",
             )
+        if self._is_frontier_ai_research_request(normalized):
+            self.permissions.require("web")
+            self.terminal_event("ACTION", "learn research: frontier-ai-systems")
+            path = self.agent.learn_research_profile("frontier-ai-systems")
+            return AssistantReply(
+                f"I learned public knowledge about frontier AI systems, saved it in {path}, and indexed it in research memory.",
+                "research_learn",
+            )
         if self._is_ai_human_research_request(normalized):
             self.permissions.require("web")
             self.terminal_event("ACTION", "learn research: ai-human-systems")
@@ -181,6 +189,36 @@ class LocalAssistant:
                 "ai agent",
                 "agentic ai",
                 "gima improvement",
+            }
+        )
+        return has_learn_intent and has_topic
+
+    def _is_frontier_ai_research_request(self, normalized: str) -> bool:
+        has_learn_intent = any(
+            phrase in normalized
+            for phrase in {
+                "learn",
+                "research",
+                "study",
+                "know about",
+                "get knowledge",
+            }
+        )
+        has_topic = any(
+            phrase in normalized
+            for phrase in {
+                "frontier ai",
+                "other ai systems",
+                "all ai systems",
+                "chatgpt gemini",
+                "chatgpt and gemini",
+                "claude",
+                "llama",
+                "mistral",
+                "deepseek",
+                "qwen",
+                "grok",
+                "best ai",
             }
         )
         return has_learn_intent and has_topic

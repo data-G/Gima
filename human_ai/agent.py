@@ -66,6 +66,27 @@ RESEARCH_LEARNING_SOURCES = {
             "https://research.google/pubs/videopoet-a-large-language-model-for-zero-shot-video-generation/",
             "https://en.wikipedia.org/wiki/Text-to-video_model",
         ],
+    },
+    "frontier-ai-systems": {
+        "title": "Frontier AI Systems",
+        "file": "frontier-ai-systems.md",
+        "keywords": (
+            "frontier AI systems ChatGPT Claude Gemini Llama Mistral Cohere DeepSeek Qwen Grok "
+            "model cards system cards alignment evaluation agentic AI multimodal reasoning coding"
+        ),
+        "sources": [
+            "https://developers.openai.com/api/docs/models",
+            "https://www.anthropic.com/system-cards",
+            "https://docs.anthropic.com/en/docs/about-claude/models",
+            "https://deepmind.google/models/model-cards/",
+            "https://ai.google.dev/gemini-api/docs/models",
+            "https://huggingface.co/meta-llama",
+            "https://docs.mistral.ai/models/overview",
+            "https://docs.cohere.com/docs/models",
+            "https://api-docs.deepseek.com/api/list-models",
+            "https://docs.x.ai/developers/models",
+            "https://qwen.readthedocs.io/en/latest/",
+        ],
     }
 }
 

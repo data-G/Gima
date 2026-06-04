@@ -66,7 +66,7 @@ def parser() -> argparse.ArgumentParser:
     learn_language.add_argument("language", choices=["sinhala"])
 
     learn_research = commands.add_parser("learn-research", help="Learn a configured research topic")
-    learn_research.add_argument("profile", choices=["ai-human-systems", "video-generation"])
+    learn_research.add_argument("profile", choices=["ai-human-systems", "video-generation", "frontier-ai-systems"])
 
     search = commands.add_parser("search", help="Search Gima memory")
     search.add_argument("query")
