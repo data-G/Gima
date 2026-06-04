@@ -16,6 +16,7 @@ from .config import load_config
 from .memory import Record
 from .permissions import PermissionManager
 from .services import dependency_report
+from .world_checklist import build_world_checklist, format_world_checklist
 
 
 DEFAULT_CONFIG = "config.local.json"
@@ -97,6 +98,7 @@ def parser() -> argparse.ArgumentParser:
     )
 
     commands.add_parser("ai-list", help="List AI providers Gima can use")
+    commands.add_parser("world-checklist", help="Show Gima's path toward frontier AI quality")
 
     daily_learn = commands.add_parser("daily-learn", help="Learn from available AI providers for a bounded time")
     daily_learn.add_argument("--minutes", type=float, default=60)
@@ -432,6 +434,8 @@ def main(argv=None) -> int:
                 print()
         elif args.command == "ai-list":
             _print_ai_providers(agent)
+        elif args.command == "world-checklist":
+            print(format_world_checklist(build_world_checklist(agent, brain)))
         elif args.command == "daily-learn":
             if not args.scheduled:
                 permissions.require("web")

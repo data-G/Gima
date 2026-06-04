@@ -194,6 +194,15 @@ class GimaControlCenterTests(unittest.TestCase):
         self.assertIn("chatgpt", output)
         self.assertIn("gemini", output)
 
+    def test_world_checklist_prints_frontier_roadmap(self):
+        with patch("human_ai.gima.BrainServer.status") as status:
+            status.return_value = {"running": False, "pid": None, "models": None}
+            output = self.run_gima("world-checklist")
+        self.assertIn("Gima world-best checklist", output)
+        self.assertIn("Model Quality", output)
+        self.assertIn("World Rank", output)
+        self.assertIn("early local assistant", output)
+
     def test_daily_learn_uses_selected_provider(self):
         with patch("human_ai.agent.Agent.daily_teacher_learning") as daily:
             daily.return_value = [("chatgpt", "memory", "lesson")]
