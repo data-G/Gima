@@ -105,6 +105,35 @@ class LocalAssistantTests(unittest.TestCase):
 
         self.assertEqual(approved.action, "self_update_ready")
 
+    def test_voice_self_update_understands_approval_intent_phrases(self):
+        for phrase in ["I said yes", "approve it", "go ahead", "ok", "Есть."]:
+            with self.subTest(phrase=phrase):
+                assistant = self.make_assistant()
+                assistant.run_text_command("update Gima add a better memory feature")
+
+                approved = assistant.run_text_command(phrase)
+
+                self.assertEqual(approved.action, "self_update_ready")
+
+    def test_voice_self_update_understands_cancel_intent_phrases(self):
+        for phrase in ["no thanks", "cancel it", "do not approve", "reject"]:
+            with self.subTest(phrase=phrase):
+                assistant = self.make_assistant()
+                assistant.run_text_command("update Gima add a better memory feature")
+
+                cancelled = assistant.run_text_command(phrase)
+
+                self.assertEqual(cancelled.action, "self_update_cancel")
+
+    def test_pending_self_update_empty_audio_asks_for_yes_or_no(self):
+        assistant = self.make_assistant()
+        assistant.run_text_command("update Gima add a better memory feature")
+
+        reply = assistant.run_text_command("[BLANK_AUDIO]")
+
+        self.assertEqual(reply.action, "self_update_confirm")
+        self.assertIn("did not catch yes or no", reply.message)
+
     def test_voice_self_update_request_can_be_cancelled_with_no(self):
         assistant = self.make_assistant()
         reply = assistant.run_text_command("self update add a better voice feature")

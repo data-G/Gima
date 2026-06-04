@@ -54,8 +54,59 @@ VOICE_CORRECTIONS = {
     "yep": "yes",
     "yah": "yes",
     "sure": "yes",
+    "okay": "yes",
+    "ok": "yes",
+    "go ahead": "yes",
+    "confirm": "yes",
+    "есть": "yes",
     "nope": "no",
     "nah": "no",
+}
+
+YES_INTENT_WORDS = {
+    "yes",
+    "y",
+    "yeah",
+    "yep",
+    "yah",
+    "approve",
+    "approved",
+    "confirm",
+    "confirmed",
+    "sure",
+    "ok",
+    "okay",
+    "go",
+    "ahead",
+    "continue",
+    "accept",
+    "accepted",
+    "allow",
+    "allowed",
+    "ඕකේ",
+    "はい",
+    "いい",
+    "да",
+    "есть",
+}
+
+NO_INTENT_WORDS = {
+    "no",
+    "n",
+    "nope",
+    "nah",
+    "cancel",
+    "stop",
+    "reject",
+    "rejected",
+    "deny",
+    "denied",
+    "dont",
+    "don't",
+    "not",
+    "නැහැ",
+    "いいえ",
+    "нет",
 }
 
 
@@ -106,6 +157,11 @@ class LocalAssistant:
         normalized = " ".join(text.casefold().strip().split())
         self.terminal_event("COMMAND ROUTER", normalized or "[empty]")
         if not normalized:
+            if self.pending_self_update:
+                return AssistantReply(
+                    "I did not catch yes or no. Please say yes to approve, or no to cancel.",
+                    "self_update_confirm",
+                )
             return AssistantReply("I did not hear a command.", "empty")
         pending_reply = self._handle_pending_self_update_approval(normalized)
         if pending_reply:
@@ -300,7 +356,8 @@ class LocalAssistant:
         if self.is_end_phrase(normalized):
             self.pending_self_update = None
             return AssistantReply("Okay. I cancelled the pending self-update approval.", "self_update_cancel")
-        if normalized in {"yes", "y", "approve", "approved", "sure", "yes approve"}:
+        approval = self._approval_intent(normalized)
+        if approval == "yes":
             update_id = self.pending_self_update["id"]
             SelfUpdateManager(
                 self.config.resolved_workspace,
@@ -312,11 +369,32 @@ class LocalAssistant:
                 "To sync it, run self-update-sync with the parent password.",
                 "self_update_ready",
             )
-        if normalized in {"no", "n", "cancel", "stop", "do not", "don't", "dont"}:
+        if approval == "no":
             update_id = self.pending_self_update["id"]
             self.pending_self_update = None
             return AssistantReply(f"Cancelled self-update confirmation for {update_id}.", "self_update_cancel")
-        return AssistantReply("Please answer yes or no for the pending self-update approval.", "self_update_confirm")
+        return AssistantReply(
+            "I heard you, but I could not tell if that was yes or no. Please say yes to approve, or no to cancel.",
+            "self_update_confirm",
+        )
+
+    def _approval_intent(self, normalized: str) -> str:
+        spoken = normalize_speech(normalized)
+        corrected = spoken
+        for wrong, right in VOICE_CORRECTIONS.items():
+            corrected = re.sub(rf"\b{re.escape(wrong)}\b", right, corrected)
+        tokens = corrected.split()
+        if not tokens:
+            return ""
+        if any(token in NO_INTENT_WORDS for token in tokens):
+            return "no"
+        if any(token in YES_INTENT_WORDS for token in tokens):
+            return "yes"
+        if "do not" in corrected or "dont" in corrected:
+            return "no"
+        if "go ahead" in corrected or "approve it" in corrected or "i said yes" in corrected:
+            return "yes"
+        return ""
 
     def _is_self_update_request(self, normalized: str) -> bool:
         has_update_intent = any(
