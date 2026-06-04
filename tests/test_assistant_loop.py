@@ -4,7 +4,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from human_ai.agent import Agent
-from human_ai.assistant_loop import LocalAssistant
+from human_ai.assistant_loop import LocalAssistant, clean_voice_transcript
 from human_ai.config import Config
 from human_ai.memory import Record
 
@@ -33,6 +33,12 @@ class LocalAssistantTests(unittest.TestCase):
     def test_end_game_alias_command_stops(self):
         reply = self.make_assistant().run_text_command("endgame")
         self.assertEqual(reply.action, "stop")
+
+    def test_voice_cleanup_corrects_common_transcript_errors(self):
+        self.assertEqual(clean_voice_transcript("and game"), "end game")
+        self.assertEqual(clean_voice_transcript("yeah"), "yes")
+        self.assertEqual(clean_voice_transcript("[Music]"), "")
+        self.assertEqual(clean_voice_transcript("thanks for watching"), "")
 
     def test_status_command_reports_tools(self):
         reply = self.make_assistant().run_text_command("status")
@@ -87,6 +93,14 @@ class LocalAssistantTests(unittest.TestCase):
         )
         self.assertIn("ready_for_parent_approval", manifest.read_text(encoding="utf-8"))
 
+    def test_voice_self_update_accepts_noisy_yes_transcript(self):
+        assistant = self.make_assistant()
+        assistant.run_text_command("update Gima add a better memory feature")
+
+        approved = assistant.run_text_command("yeah")
+
+        self.assertEqual(approved.action, "self_update_ready")
+
     def test_voice_self_update_request_can_be_cancelled_with_no(self):
         assistant = self.make_assistant()
         reply = assistant.run_text_command("self update add a better voice feature")
@@ -117,6 +131,21 @@ class LocalAssistantTests(unittest.TestCase):
                 0,
             )
         self.assertGreaterEqual(speak.call_count, 2)
+
+    def test_direct_conversation_retries_empty_or_filler_transcripts(self):
+        assistant = self.make_assistant()
+        assistant.config.permissions.require_scoped_grants = False
+        with patch.object(
+            assistant,
+            "listen_once",
+            side_effect=["[Music]", "End Game"],
+        ), patch.object(assistant.voice, "speak") as speak:
+            self.assertEqual(
+                assistant.run_conversation(Path("/tmp/whisper.bin"), conversation_turns=3),
+                0,
+            )
+        spoken = [call.args[0] for call in speak.call_args_list]
+        self.assertIn("I did not catch that. Please say it again.", spoken)
 
     def test_voice_can_learn_from_internet_topic(self):
         assistant = self.make_assistant()

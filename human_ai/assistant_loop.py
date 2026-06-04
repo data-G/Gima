@@ -25,6 +25,54 @@ class AssistantReply:
     action: str = "answer"
 
 
+FILLER_TRANSCRIPTS = {
+    "",
+    "you",
+    "thank you",
+    "thanks for watching",
+    "thank you for watching",
+    "please subscribe",
+    "subtitle",
+    "subtitles",
+    "music",
+    "silence",
+}
+
+VOICE_CORRECTIONS = {
+    "and game": "end game",
+    "endgame": "end game",
+    "in game": "end game",
+    "end games": "end game",
+    "jima": "gima",
+    "gimma": "gima",
+    "geema": "gima",
+    "schema": "gima",
+    "yes sure": "yes",
+    "yeah": "yes",
+    "yep": "yes",
+    "yah": "yes",
+    "sure": "yes",
+    "nope": "no",
+    "nah": "no",
+}
+
+
+def clean_voice_transcript(text: str) -> str:
+    cleaned = re.sub(r"\[[^\]]+\]|\([^\)]+\)", " ", text)
+    cleaned = " ".join(cleaned.strip().split())
+    if not cleaned:
+        return ""
+    normalized = normalize_speech(cleaned)
+    if normalized in FILLER_TRANSCRIPTS:
+        return ""
+    corrected = normalized
+    for wrong, right in VOICE_CORRECTIONS.items():
+        corrected = re.sub(rf"\b{re.escape(wrong)}\b", right, corrected)
+    if corrected in {"yes", "no", "end game", "gima"}:
+        return corrected
+    return cleaned
+
+
 class LocalAssistant:
     """Voice-first assistant that answers locally and runs bounded actions."""
 
@@ -42,6 +90,7 @@ class LocalAssistant:
         print(f"[{timestamp}] {event}{suffix}", flush=True)
 
     def run_text_command(self, text: str) -> AssistantReply:
+        text = clean_voice_transcript(text)
         normalized = " ".join(text.casefold().strip().split())
         self.terminal_event("COMMAND ROUTER", normalized or "[empty]")
         if not normalized:
@@ -486,6 +535,14 @@ class LocalAssistant:
             except Exception as error:
                 self.terminal_event("AUDIO WARNING", str(error))
                 continue
+            cleaned_command = clean_voice_transcript(command)
+            if cleaned_command != command:
+                self.terminal_event("TRANSCRIPT CLEANED", cleaned_command or "[empty]")
+            if not cleaned_command:
+                self.terminal_event("TRANSCRIPT FILTERED", "empty/filler; retrying")
+                self.voice.speak("I did not catch that. Please say it again.")
+                continue
+            command = cleaned_command
             reply = self.answer_voice_command(command)
             if reply.action == "stop":
                 self.terminal_event("STOP", "End phrase received")
