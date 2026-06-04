@@ -521,6 +521,36 @@ crawl the internet, upload biometric images, rewrite its own code, delete files,
 or publish anything. Those behaviors should remain visible, permissioned
 workflows as the system grows.
 
+## Self-Update Workflow
+
+When you ask for a new Gima feature, prepare a separate backed-up working copy:
+
+```bash
+python3 -m human_ai.gima self-update-prepare "add the feature description here"
+```
+
+This creates:
+
+- a backup archive under `.human-ai/self_updates/backups/`
+- a working copy under `.human-ai/self_updates/requests/<update_id>/working_copy`
+- a plan file for the requested feature
+
+Edit and test the working copy first. When it is ready:
+
+```bash
+python3 -m human_ai.gima self-update-ready <update_id> --notes "tests passed"
+```
+
+Sync into the live Gima only after parent approval:
+
+```bash
+python3 -m human_ai.gima self-update-sync <update_id> --restart
+```
+
+`self-update-sync` asks for the parent password, creates another backup before
+copying, and refuses to overwrite a dirty live git workspace unless `--force` is
+provided.
+
 ## Tests
 
 ```bash

@@ -273,6 +273,39 @@ class GimaControlCenterTests(unittest.TestCase):
         plist = Path(self.temp.name) / "Library" / "LaunchAgents" / "com.gima.daily-ai-learning.plist"
         self.assertTrue(plist.exists())
 
+    def test_self_update_prepare_creates_backup_and_working_copy(self):
+        source = Path(self.temp.name) / "README.md"
+        source.write_text("old gima\n", encoding="utf-8")
+        output = self.run_gima("self-update-prepare", "add", "feature", "planner")
+        self.assertIn("Prepared self-update", output)
+        updates = Path(self.temp.name) / ".human-ai" / "self_updates"
+        manifests = list(updates.glob("requests/update_*/manifest.json"))
+        self.assertEqual(len(manifests), 1)
+        manifest = json.loads(manifests[0].read_text(encoding="utf-8"))
+        self.assertEqual(manifest["status"], "prepared")
+        self.assertTrue(Path(manifest["backup_path"]).exists())
+        self.assertTrue((Path(manifest["working_copy"]) / "README.md").exists())
+        self.assertTrue(Path(manifest["plan_path"]).exists())
+
+    def test_self_update_ready_and_parent_sync_copy_new_version(self):
+        (Path(self.temp.name) / "README.md").write_text("old gima\n", encoding="utf-8")
+        self.run_gima("self-update-prepare", "add", "feature", "planner")
+        manifest_path = next((Path(self.temp.name) / ".human-ai" / "self_updates").glob("requests/update_*/manifest.json"))
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        update_id = manifest["id"]
+        working_readme = Path(manifest["working_copy"]) / "README.md"
+        working_readme.write_text("new gima\n", encoding="utf-8")
+
+        ready = self.run_gima("self-update-ready", update_id, "--notes", "tests passed in copy")
+        self.assertIn("ready for parent approval", ready)
+        synced = self.run_gima("self-update-sync", update_id, "--password", "parent-pass")
+
+        self.assertIn("Synced self-update", synced)
+        self.assertEqual((Path(self.temp.name) / "README.md").read_text(encoding="utf-8"), "new gima\n")
+        updated_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        self.assertEqual(updated_manifest["status"], "synced")
+        self.assertTrue(Path(updated_manifest["sync_backup_path"]).exists())
+
     def test_heart_list_requires_parent_password(self):
         output = io.StringIO()
         with redirect_stdout(output):

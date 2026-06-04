@@ -16,6 +16,7 @@ from .config import load_config
 from .memory import Record
 from .permissions import PermissionManager
 from .secrets import SECRET_ENV_KEYS, configure_teacher_secrets, load_secret_env, secrets_env_path
+from .self_update import SelfUpdateManager
 from .services import dependency_report
 from .world_checklist import build_world_checklist, format_world_checklist
 
@@ -125,6 +126,21 @@ def parser() -> argparse.ArgumentParser:
     schedule.add_argument("--topic")
     schedule.add_argument("--pause-seconds", type=int, default=None)
     schedule.add_argument("--no-load", action="store_true", help="Write the plist but do not load it now")
+
+    self_prepare = commands.add_parser("self-update-prepare", help="Create a backed-up working copy for a feature")
+    self_prepare.add_argument("feature", nargs="+")
+
+    commands.add_parser("self-update-list", help="List prepared self-update requests")
+
+    self_ready = commands.add_parser("self-update-ready", help="Mark a working copy ready for parent approval")
+    self_ready.add_argument("update_id")
+    self_ready.add_argument("--notes", default="")
+
+    self_sync = commands.add_parser("self-update-sync", help="Parent-approved sync from working copy to live Gima")
+    self_sync.add_argument("update_id")
+    self_sync.add_argument("--password", help="Parent password. Prefer GIMA_PARENT_PASSWORD for scripts.")
+    self_sync.add_argument("--force", action="store_true", help="Sync even if live workspace has uncommitted changes")
+    self_sync.add_argument("--restart", action="store_true", help="Restart the local brain after syncing")
 
     heart_sources = commands.add_parser("heart-sources", help="List external AI policy systems Gima can review")
     heart_sources.add_argument("--password", help="Parent password. Prefer GIMA_PARENT_PASSWORD for scripts.")
@@ -361,6 +377,19 @@ def _schedule_daily_learning(args, config_path: str | None, config) -> Path:
     return plist_path
 
 
+def _print_self_updates(rows) -> None:
+    if not rows:
+        print("No self-update requests.")
+        return
+    for row in rows:
+        print(f"[{row['id']}] {row['status']} - {row['feature']}")
+        print(f"working copy: {row['working_copy']}")
+        print(f"backup: {row['backup_path']}")
+        if row.get("ready_notes"):
+            print(f"notes: {row['ready_notes']}")
+        print()
+
+
 def _shell_quote(value: str) -> str:
     return "'" + value.replace("'", "'\\''") + "'"
 
@@ -372,6 +401,7 @@ def main(argv=None) -> int:
     agent = Agent(config)
     brain = BrainServer(config, agent.memory)
     permissions = PermissionManager(config, agent.memory)
+    self_updates = SelfUpdateManager(config.resolved_workspace, config.resolved_data_dir)
     try:
         if args.command == "start":
             pid = brain.start()
@@ -481,6 +511,28 @@ def main(argv=None) -> int:
             path = _schedule_daily_learning(args, args.config, config)
             status = "installed" if not args.no_load else "written"
             print(f"Daily AI learning schedule {status}: {path}")
+        elif args.command == "self-update-prepare":
+            request = self_updates.prepare(" ".join(args.feature))
+            print(f"Prepared self-update {request.update_id}")
+            print(f"Backup: {request.backup_path}")
+            print(f"Working copy: {request.working_copy}")
+            print(f"Plan: {request.plan_path}")
+            print("Edit/test the working copy, then run self-update-ready.")
+        elif args.command == "self-update-list":
+            _print_self_updates(self_updates.list_requests())
+        elif args.command == "self-update-ready":
+            row = self_updates.mark_ready(args.update_id, args.notes)
+            print(f"Self-update {row['id']} is ready for parent approval.")
+            print(f"Working copy: {row['working_copy']}")
+        elif args.command == "self-update-sync":
+            reviewer = _require_parent(agent, permissions, args.password)
+            row = self_updates.sync(args.update_id, reviewer, args.force)
+            print(f"Synced self-update {row['id']} as {reviewer}")
+            print(f"Pre-sync backup: {row['sync_backup_path']}")
+            if args.restart:
+                brain.stop()
+                pid = brain.start()
+                print(f"Gima brain restarted with pid {pid}")
         elif args.command == "heart-sources":
             _require_parent(agent, permissions, args.password)
             _print_heart_sources(agent)
