@@ -65,6 +65,39 @@ class LocalAssistantTests(unittest.TestCase):
         self.assertIn("reply only in English", sent)
         self.assertIn("User message: はい", sent)
 
+    def test_voice_self_update_request_asks_yes_no_then_marks_ready(self):
+        assistant = self.make_assistant()
+        reply = assistant.run_text_command("update Gima add a better memory feature")
+        self.assertEqual(reply.action, "self_update_confirm")
+        self.assertIn("Are you sure", reply.message)
+        self.assertIsNotNone(assistant.pending_self_update)
+        update_id = assistant.pending_self_update["id"]
+
+        approved = assistant.run_text_command("yes")
+
+        self.assertEqual(approved.action, "self_update_ready")
+        self.assertIn(update_id, approved.message)
+        self.assertIsNone(assistant.pending_self_update)
+        manifest = (
+            assistant.config.resolved_data_dir
+            / "self_updates"
+            / "requests"
+            / update_id
+            / "manifest.json"
+        )
+        self.assertIn("ready_for_parent_approval", manifest.read_text(encoding="utf-8"))
+
+    def test_voice_self_update_request_can_be_cancelled_with_no(self):
+        assistant = self.make_assistant()
+        reply = assistant.run_text_command("self update add a better voice feature")
+        self.assertEqual(reply.action, "self_update_confirm")
+        self.assertIsNotNone(assistant.pending_self_update)
+
+        cancelled = assistant.run_text_command("no")
+
+        self.assertEqual(cancelled.action, "self_update_cancel")
+        self.assertIsNone(assistant.pending_self_update)
+
     def test_memory_search_reads_local_memory(self):
         assistant = self.make_assistant()
         assistant.agent.memory.add(

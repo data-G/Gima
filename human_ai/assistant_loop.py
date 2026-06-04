@@ -13,6 +13,7 @@ from .agent import Agent
 from .daily_summary import DailySummaryService
 from .permissions import PermissionManager
 from .readers import read_file
+from .self_update import SelfUpdateManager
 from .services import MediaAnalyzer, MediaCapture, Voice, dependency_report
 from .wake import WakeAssistant
 from .wake import normalize_speech
@@ -33,6 +34,7 @@ class LocalAssistant:
         self.permissions = PermissionManager(self.config, agent.memory)
         self.voice = Voice()
         self.response_language = "English"
+        self.pending_self_update: dict[str, str] | None = None
 
     def terminal_event(self, event: str, detail: str = "") -> None:
         timestamp = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
@@ -44,6 +46,9 @@ class LocalAssistant:
         self.terminal_event("COMMAND ROUTER", normalized or "[empty]")
         if not normalized:
             return AssistantReply("I did not hear a command.", "empty")
+        pending_reply = self._handle_pending_self_update_approval(normalized)
+        if pending_reply:
+            return pending_reply
         if self.is_end_phrase(normalized) or normalized in {"stop", "exit", "quit", "goodbye", "sleep"}:
             return AssistantReply("Okay. I am going back to sleep.", "stop")
         language_switch = self._language_switch_request(text, normalized)
@@ -100,6 +105,20 @@ class LocalAssistant:
                 self.agent.memory,
             ).generate()
             return AssistantReply(f"I created the daily source summary attachment at {summary.attachment_path}.")
+        if self._is_self_update_request(normalized):
+            feature = self._self_update_feature(text)
+            self.terminal_event("ACTION", f"self-update prepare: {feature}")
+            request = SelfUpdateManager(
+                self.config.resolved_workspace,
+                self.config.resolved_data_dir,
+            ).prepare(feature)
+            self.pending_self_update = {"id": request.update_id, "feature": feature}
+            return AssistantReply(
+                "I prepared a backed-up working copy for that feature. "
+                f"Update id {request.update_id}. "
+                "Are you sure you want me to mark it ready for parent approval? Say yes or no.",
+                "self_update_confirm",
+            )
         if self._is_language_learn_request(normalized, "sinhala"):
             self.permissions.require("web")
             self.terminal_event("ACTION", "learn language: sinhala")
@@ -213,6 +232,65 @@ class LocalAssistant:
         )
         has_permission = any(word in normalized for word in {"approve", "approved", "allow", "permission", "permit"})
         return has_switch and not has_permission
+
+    def _handle_pending_self_update_approval(self, normalized: str) -> AssistantReply | None:
+        if not self.pending_self_update:
+            return None
+        if self.is_end_phrase(normalized):
+            self.pending_self_update = None
+            return AssistantReply("Okay. I cancelled the pending self-update approval.", "self_update_cancel")
+        if normalized in {"yes", "y", "approve", "approved", "sure", "yes approve"}:
+            update_id = self.pending_self_update["id"]
+            SelfUpdateManager(
+                self.config.resolved_workspace,
+                self.config.resolved_data_dir,
+            ).mark_ready(update_id, "voice confirmation yes")
+            self.pending_self_update = None
+            return AssistantReply(
+                f"Marked self-update {update_id} ready for parent approval. "
+                "To sync it, run self-update-sync with the parent password.",
+                "self_update_ready",
+            )
+        if normalized in {"no", "n", "cancel", "stop", "do not", "don't", "dont"}:
+            update_id = self.pending_self_update["id"]
+            self.pending_self_update = None
+            return AssistantReply(f"Cancelled self-update confirmation for {update_id}.", "self_update_cancel")
+        return AssistantReply("Please answer yes or no for the pending self-update approval.", "self_update_confirm")
+
+    def _is_self_update_request(self, normalized: str) -> bool:
+        has_update_intent = any(
+            phrase in normalized
+            for phrase in {
+                "update gima",
+                "self update",
+                "self-update",
+                "add feature",
+                "new feature",
+                "change gima",
+            }
+        )
+        has_feature_signal = any(
+            phrase in normalized
+            for phrase in {
+                "feature",
+                "add",
+                "change",
+                "update",
+                "improve",
+                "make",
+            }
+        )
+        return has_update_intent and has_feature_signal
+
+    def _self_update_feature(self, text: str) -> str:
+        cleaned = re.sub(
+            r"\b(gima|please|can you|could you|update gima|self update|self-update|add feature|new feature|change gima|improve gima)\b",
+            " ",
+            text,
+            flags=re.IGNORECASE,
+        )
+        feature = " ".join(cleaned.strip(" ?.!,;:").split())
+        return feature or text.strip()
 
     def _is_language_learn_request(self, normalized: str, language: str) -> bool:
         return language in normalized and any(
