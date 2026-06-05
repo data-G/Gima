@@ -340,6 +340,27 @@ class GimaControlCenterTests(unittest.TestCase):
         self.assertEqual(updated["model"]["context_size"], 8192)
         self.assertEqual(updated["model"]["max_tokens"], 128)
 
+    def test_capabilities_refresh_and_list(self):
+        with patch("human_ai.gima.BrainServer.status") as status:
+            status.return_value = {"running": True, "pid": 123, "models": None}
+            refreshed = self.run_gima("capabilities-refresh")
+        self.assertIn("Capabilities saved", refreshed)
+        self.assertIn("Total:", refreshed)
+
+        listed = self.run_gima("capabilities-list", "--limit", "3")
+        self.assertIn("Core Intelligence", listed)
+        self.assertIn("source:", listed)
+        cap_dir = Path(self.temp.name) / ".human-ai" / "capabilities"
+        self.assertTrue((cap_dir / "capabilities.csv").exists())
+        self.assertTrue((cap_dir / "sources.md").exists())
+
+    def test_world_checklist_reflects_capability_registry(self):
+        with patch("human_ai.gima.BrainServer.status") as status:
+            status.return_value = {"running": True, "pid": 123, "models": None}
+            self.run_gima("capabilities-refresh")
+            output = self.run_gima("world-checklist")
+        self.assertIn("Tracked capability rows:", output)
+
     def test_daily_learn_uses_selected_provider(self):
         with patch("human_ai.agent.Agent.daily_teacher_learning") as daily:
             daily.return_value = [("chatgpt", "memory", "lesson")]

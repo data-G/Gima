@@ -28,6 +28,7 @@ def build_world_checklist(agent: Agent, brain: BrainServer) -> List[ChecklistIte
     eval_cases = _count_csv_rows(agent.config.resolved_data_dir / "evals" / "cases.csv")
     eval_results = _count_csv_rows(agent.config.resolved_data_dir / "evals" / "results.csv")
     scale_reports = _count_csv_rows(agent.config.resolved_data_dir / "scale" / "scale_reports.csv")
+    capability_rows = _count_csv_rows(agent.config.resolved_data_dir / "capabilities" / "capabilities.csv")
 
     missing_tools = [name for name, ok in deps.items() if not ok]
     ready_providers = [row["provider"] for row in providers if row["available"] == "yes"]
@@ -121,7 +122,10 @@ def build_world_checklist(agent: Agent, brain: BrainServer) -> List[ChecklistIte
             "Product",
             "Make Gima easy to start, stop, debug, update, and understand from the terminal.",
             "started",
-            "Add one-command launch, logs, health monitor, and a clean command reference.",
+            (
+                f"Keep `status`, `doctor`, model-level, eval, scale, and capability reports current. "
+                f"Tracked capability rows: {capability_rows}."
+            ),
         ),
         ChecklistItem(
             "World Rank",

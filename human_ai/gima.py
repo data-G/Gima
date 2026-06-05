@@ -12,6 +12,7 @@ from pathlib import Path
 from .agent import Agent
 from .assistant_loop import LocalAssistant
 from .brain import BrainServer
+from .capabilities import CapabilityStore
 from .config import load_config
 from .dream import DreamIdea, DreamStore
 from .evals import EvalStore
@@ -133,6 +134,12 @@ def parser() -> argparse.ArgumentParser:
     eval_results.add_argument("--limit", type=int, default=20)
 
     commands.add_parser("scale-report", help="Measure Gima scale, storage, eval, and model readiness")
+
+    capabilities_list = commands.add_parser("capabilities-list", help="List Gima's frontier capability registry")
+    capabilities_list.add_argument("--status", choices=["done", "started", "planned", "missing", "all"], default="all")
+    capabilities_list.add_argument("--limit", type=int, default=100)
+
+    commands.add_parser("capabilities-refresh", help="Refresh Gima's capability registry CSV")
 
     daily_learn = commands.add_parser("daily-learn", help="Learn from available AI providers for a bounded time")
     daily_learn.add_argument("--minutes", type=float, default=60)
@@ -400,6 +407,23 @@ def _print_model_levels(manager: ModelLevelManager, active_level: str) -> None:
             print(f"  source: {level.source}")
 
 
+def _print_capabilities(rows, status: str, limit: int) -> None:
+    shown = 0
+    for row in rows:
+        if status != "all" and row["status"] != status:
+            continue
+        print(f"[{row['status']}] {row['family']} - {row['capability']}")
+        print(f"support: {row['local_support']}")
+        print(f"next: {row['next_action']}")
+        print(f"source: {row['source']}")
+        print()
+        shown += 1
+        if shown >= limit:
+            break
+    if shown == 0:
+        print("No matching capabilities.")
+
+
 def _teacher_setup_providers(values: list[str] | None) -> list[str]:
     if not values or "all" in values:
         return ["openai", "gemini"]
@@ -479,6 +503,7 @@ def main(argv=None) -> int:
     load_secret_env(config.resolved_workspace)
     agent = Agent(config)
     brain = BrainServer(config, agent.memory)
+    capabilities = CapabilityStore(config.resolved_data_dir)
     dreams = DreamStore(config.resolved_data_dir)
     evals = EvalStore(config.resolved_data_dir)
     scale = ScaleReporter(config)
@@ -632,6 +657,18 @@ def main(argv=None) -> int:
             print(f"Conversation rows: {report.conversation_rows}")
             print(f"Eval results: {report.eval_results}")
             print(f"Recommendation: {report.recommendation}")
+        elif args.command == "capabilities-refresh":
+            report = capabilities.build(agent, brain)
+            print(f"Capabilities saved: {report.path}")
+            print(f"Total: {report.total}")
+            print(f"Done: {report.done}")
+            print(f"Started: {report.started}")
+            print(f"Planned: {report.planned}")
+            print(f"Missing: {report.missing}")
+        elif args.command == "capabilities-list":
+            if not capabilities.capabilities_path.exists():
+                capabilities.build(agent, brain)
+            _print_capabilities(capabilities.list_rows(), args.status, args.limit)
         elif args.command == "daily-learn":
             if not args.scheduled:
                 permissions.require("web")
