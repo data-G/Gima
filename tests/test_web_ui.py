@@ -44,6 +44,10 @@ class WebUiTests(unittest.TestCase):
         self.assertIn("--bg: #050608", INDEX_HTML)
         self.assertIn("/api/chat", INDEX_HTML)
         self.assertIn("Memory Search", INDEX_HTML)
+        self.assertIn("Attach Files", INDEX_HTML)
+        self.assertIn("Generate Song Sketch", INDEX_HTML)
+        self.assertIn("Generate Video From Audio", INDEX_HTML)
+        self.assertIn("Coding Split", INDEX_HTML)
 
     def test_web_api_status_chat_and_memory_search(self):
         self.agent.memory.add(
@@ -76,11 +80,122 @@ class WebUiTests(unittest.TestCase):
             finally:
                 web.stop()
 
+    def test_web_api_uploads_files_and_lists_them(self):
+        with patch.object(BrainServer, "status", return_value={"running": False, "pid": None, "models": None}):
+            web = serve_in_thread(self.config, self.agent, self.brain)
+            try:
+                host, port = web.server.server_address
+                uploaded = self._multipart_upload(host, port, "note.txt", b"hello gima")
+                self.assertEqual(uploaded["files"][0]["name"], "note.txt")
+                self.assertTrue(Path(uploaded["files"][0]["path"]).exists())
+
+                listed = self._request(host, port, "GET", "/api/files")
+                self.assertEqual(listed["files"][0]["name"], "note.txt")
+            finally:
+                web.stop()
+
+    def test_web_api_generates_local_song_sketch(self):
+        with patch.object(BrainServer, "status", return_value={"running": False, "pid": None, "models": None}):
+            web = serve_in_thread(self.config, self.agent, self.brain)
+            try:
+                host, port = web.server.server_address
+                song = self._request(
+                    host,
+                    port,
+                    "POST",
+                    "/api/media/song-local",
+                    {"prompt": "happy Gima intro", "duration_seconds": 4},
+                )
+                self.assertTrue(Path(song["output"]).exists())
+                self.assertTrue(song["output"].endswith(".wav"))
+                self.assertTrue(Path(song["manifest"]).exists())
+            finally:
+                web.stop()
+
+    def test_web_api_video_and_code_tools(self):
+        from human_ai.services import MusicVideoProject
+        from human_ai.vibe_code import VibeCodeFile, VibeCodePlan
+        from human_ai.self_update import SelfUpdateRequest
+
+        with patch.object(BrainServer, "status", return_value={"running": False, "pid": None, "models": None}):
+            web = serve_in_thread(self.config, self.agent, self.brain)
+            try:
+                host, port = web.server.server_address
+                project_dir = Path(self.temp.name) / "project"
+                project_dir.mkdir()
+                output_path = project_dir / "video.mp4"
+                output_path.write_bytes(b"mp4")
+                manifest_path = project_dir / "manifest.json"
+                manifest_path.write_text("{}", encoding="utf-8")
+                prompt_path = project_dir / "prompt.txt"
+                prompt_path.write_text("prompt", encoding="utf-8")
+                with patch("human_ai.web_ui.LocalMusicVideoRenderer.render") as render:
+                    render.return_value = MusicVideoProject(project_dir, output_path, manifest_path, prompt_path)
+                    video = self._request(
+                        host,
+                        port,
+                        "POST",
+                        "/api/media/music-video-local",
+                        {"audio_path": str(project_dir / "song.wav"), "prompt": "waveform", "style": "waveform", "consent": True},
+                    )
+                self.assertEqual(video["output"], str(output_path))
+
+                update = SelfUpdateRequest(
+                    "update_test",
+                    "add split coding",
+                    project_dir,
+                    project_dir / "copy",
+                    project_dir / "backup.tar.gz",
+                    project_dir / "plan.md",
+                    project_dir / "manifest.json",
+                    "prepared",
+                )
+                with patch("human_ai.web_ui.VibeCodingAgent.plan") as plan:
+                    plan.return_value = VibeCodePlan(
+                        update,
+                        project_dir / "vibe.md",
+                        project_dir / "patch.patch",
+                        project_dir / "snapshot.json",
+                        [VibeCodeFile("human_ai/web_ui.py", 9, "path matches web", 100)],
+                        "kb_plan",
+                    )
+                    code = self._request(
+                        host,
+                        port,
+                        "POST",
+                        "/api/code/vibe-plan",
+                        {"feature": "add split coding", "max_files": 8},
+                    )
+                self.assertEqual(code["update_id"], "update_test")
+                self.assertEqual(code["candidate_files"][0]["path"], "human_ai/web_ui.py")
+            finally:
+                web.stop()
+
     def _request(self, host, port, method, path, body=None):
         connection = http.client.HTTPConnection(host, port, timeout=10)
         payload = json.dumps(body).encode("utf-8") if body is not None else None
         headers = {"Content-Type": "application/json"} if body is not None else {}
         connection.request(method, path, body=payload, headers=headers)
+        response = connection.getresponse()
+        data = json.loads(response.read().decode("utf-8"))
+        connection.close()
+        self.assertLess(response.status, 400, data)
+        return data
+
+    def _multipart_upload(self, host, port, filename, content):
+        boundary = "----gima-test-boundary"
+        body = (
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="files"; filename="{filename}"\r\n'
+            "Content-Type: text/plain\r\n\r\n"
+        ).encode("utf-8") + content + f"\r\n--{boundary}--\r\n".encode("utf-8")
+        connection = http.client.HTTPConnection(host, port, timeout=10)
+        connection.request(
+            "POST",
+            "/api/files/upload",
+            body=body,
+            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+        )
         response = connection.getresponse()
         data = json.loads(response.read().decode("utf-8"))
         connection.close()

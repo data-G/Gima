@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import json
+import mimetypes
+import re
 import threading
 import time
 import urllib.parse
+import uuid
 from dataclasses import dataclass
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -13,6 +16,9 @@ from typing import Any, Callable
 from .agent import Agent
 from .brain import BrainServer
 from .config import Config
+from .memory import Record
+from .services import LocalMusicVideoRenderer, LocalSongSketcher
+from .vibe_code import VibeCodingAgent
 
 
 INDEX_HTML = """<!doctype html>
@@ -49,14 +55,19 @@ INDEX_HTML = """<!doctype html>
     }
     .app {
       display: grid;
-      grid-template-columns: 280px 1fr;
+      grid-template-columns: 280px minmax(0, 1fr) 360px;
       min-height: 100vh;
     }
-    aside {
-      border-right: 1px solid var(--line);
+    aside, .workspace {
       background: rgba(13, 17, 23, 0.88);
       padding: 20px;
       backdrop-filter: blur(18px);
+    }
+    aside { border-right: 1px solid var(--line); }
+    .workspace {
+      border-left: 1px solid var(--line);
+      overflow: auto;
+      max-height: 100vh;
     }
     .brand {
       display: flex;
@@ -115,7 +126,7 @@ INDEX_HTML = """<!doctype html>
       cursor: pointer;
     }
     .quick button:hover, .search button:hover { border-color: var(--accent); }
-    .search input {
+    .search input, .tool-input, .tool-select {
       width: 100%;
       background: #050608;
       border: 1px solid var(--line);
@@ -124,6 +135,33 @@ INDEX_HTML = """<!doctype html>
       padding: 10px 12px;
       outline: none;
     }
+    .tool-input, .tool-select { margin-top: 8px; }
+    .tool-textarea {
+      width: 100%;
+      min-height: 78px;
+      margin-top: 8px;
+      background: #050608;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      color: var(--text);
+      padding: 10px 12px;
+      outline: none;
+      resize: vertical;
+      font: inherit;
+    }
+    .tool-button {
+      width: 100%;
+      margin-top: 8px;
+      border: 1px solid rgba(124, 92, 255, 0.45);
+      background: linear-gradient(135deg, rgba(124, 92, 255, 0.28), rgba(0, 212, 255, 0.16));
+      color: var(--text);
+      border-radius: 12px;
+      padding: 10px 12px;
+      text-align: center;
+      cursor: pointer;
+      font-weight: 700;
+    }
+    .tool-button:disabled { opacity: 0.55; cursor: wait; }
     .results {
       margin-top: 10px;
       max-height: 220px;
@@ -131,6 +169,28 @@ INDEX_HTML = """<!doctype html>
       color: var(--muted);
       font-size: 12px;
       line-height: 1.4;
+    }
+    .tool-output {
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+    .file-list {
+      margin-top: 10px;
+      display: grid;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .file-chip {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 8px;
+      background: rgba(5, 6, 8, 0.58);
+      overflow-wrap: anywhere;
     }
     main {
       display: grid;
@@ -221,7 +281,7 @@ INDEX_HTML = """<!doctype html>
     }
     @media (max-width: 840px) {
       .app { grid-template-columns: 1fr; }
-      aside { display: none; }
+      aside, .workspace { display: none; }
       .chat, .composer { padding-left: 16px; padding-right: 16px; }
     }
   </style>
@@ -274,12 +334,52 @@ INDEX_HTML = """<!doctype html>
         <div class="hint">Enter sends. Shift+Enter makes a new line. Server is local by default.</div>
       </div>
     </main>
+    <section class="workspace">
+      <div class="brand">
+        <div class="logo">W</div>
+        <div>
+          <h1>Workspace</h1>
+          <p class="subtitle">files, media, coding split</p>
+        </div>
+      </div>
+      <div class="card">
+        <h2 style="font-size: 14px;">Attach Files</h2>
+        <input class="tool-input" id="fileInput" type="file" multiple>
+        <button class="tool-button" id="uploadBtn">Upload to Gima</button>
+        <div class="file-list" id="fileList"></div>
+      </div>
+      <div class="card">
+        <h2 style="font-size: 14px;">Generate Song Sketch</h2>
+        <textarea class="tool-textarea" id="songPrompt" placeholder="Example: happy cinematic intro for Gima"></textarea>
+        <input class="tool-input" id="songDuration" type="number" min="4" max="60" value="12">
+        <button class="tool-button" id="songBtn">Generate Local WAV</button>
+        <div class="tool-output" id="songOutput"></div>
+      </div>
+      <div class="card">
+        <h2 style="font-size: 14px;">Generate Video From Audio</h2>
+        <input class="tool-input" id="videoAudioPath" placeholder="Audio path or uploaded file path">
+        <textarea class="tool-textarea" id="videoPrompt" placeholder="Describe the video mood"></textarea>
+        <select class="tool-select" id="videoStyle">
+          <option value="waveform">Waveform</option>
+          <option value="spectrum">Spectrum</option>
+        </select>
+        <button class="tool-button" id="videoBtn">Render Local MP4</button>
+        <div class="tool-output" id="videoOutput"></div>
+      </div>
+      <div class="card">
+        <h2 style="font-size: 14px;">Coding Split</h2>
+        <textarea class="tool-textarea" id="codeFeature" placeholder="Feature to plan offline, e.g. add file preview"></textarea>
+        <button class="tool-button" id="codeBtn">Create Vibe Code Plan</button>
+        <div class="tool-output" id="codeOutput"></div>
+      </div>
+    </section>
   </div>
   <script>
     const chat = document.getElementById('chat');
     const form = document.getElementById('form');
     const message = document.getElementById('message');
     const send = document.getElementById('send');
+    const fileList = document.getElementById('fileList');
 
     function addMessage(role, text) {
       const row = document.createElement('div');
@@ -296,6 +396,27 @@ INDEX_HTML = """<!doctype html>
       document.getElementById('brain').textContent = data.brain.running ? 'running' : 'stopped';
       document.getElementById('model').textContent = data.model || 'not configured';
       document.getElementById('memory').textContent = data.memory_rows + ' rows';
+    }
+
+    async function apiPost(path, payload) {
+      const res = await fetch(path, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(payload)
+      });
+      return await res.json();
+    }
+
+    function setOutput(id, data) {
+      document.getElementById(id).textContent = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
+    }
+
+    async function refreshFiles() {
+      const res = await fetch('/api/files');
+      const data = await res.json();
+      fileList.innerHTML = data.files.length
+        ? data.files.map(file => `<div class="file-chip"><b>${file.name}</b><br>${file.path}<br>${file.size_bytes} bytes</div>`).join('')
+        : '<div class="file-chip">No uploaded files yet.</div>';
     }
 
     async function sendMessage(text) {
@@ -345,7 +466,56 @@ INDEX_HTML = """<!doctype html>
         ? data.results.map(row => `<p><b>${row.title}</b><br>${row.content}</p>`).join('')
         : '<p>No matching memory.</p>';
     });
+    document.getElementById('uploadBtn').addEventListener('click', async () => {
+      const input = document.getElementById('fileInput');
+      if (!input.files.length) return;
+      const formData = new FormData();
+      Array.from(input.files).forEach(file => formData.append('files', file));
+      document.getElementById('uploadBtn').disabled = true;
+      try {
+        const res = await fetch('/api/files/upload', { method: 'POST', body: formData });
+        const data = await res.json();
+        await refreshFiles();
+        addMessage('assistant', `Attached ${data.files.length} file(s) to Gima memory.`);
+      } finally {
+        document.getElementById('uploadBtn').disabled = false;
+      }
+    });
+    document.getElementById('songBtn').addEventListener('click', async () => {
+      const prompt = document.getElementById('songPrompt').value.trim();
+      const duration = Number(document.getElementById('songDuration').value || 12);
+      if (!prompt) return;
+      document.getElementById('songBtn').disabled = true;
+      try {
+        setOutput('songOutput', await apiPost('/api/media/song-local', { prompt, duration_seconds: duration }));
+      } finally {
+        document.getElementById('songBtn').disabled = false;
+      }
+    });
+    document.getElementById('videoBtn').addEventListener('click', async () => {
+      const audio_path = document.getElementById('videoAudioPath').value.trim();
+      const prompt = document.getElementById('videoPrompt').value.trim();
+      const style = document.getElementById('videoStyle').value;
+      if (!audio_path || !prompt) return;
+      document.getElementById('videoBtn').disabled = true;
+      try {
+        setOutput('videoOutput', await apiPost('/api/media/music-video-local', { audio_path, prompt, style, consent: true }));
+      } finally {
+        document.getElementById('videoBtn').disabled = false;
+      }
+    });
+    document.getElementById('codeBtn').addEventListener('click', async () => {
+      const feature = document.getElementById('codeFeature').value.trim();
+      if (!feature) return;
+      document.getElementById('codeBtn').disabled = true;
+      try {
+        setOutput('codeOutput', await apiPost('/api/code/vibe-plan', { feature, max_files: 8 }));
+      } finally {
+        document.getElementById('codeBtn').disabled = false;
+      }
+    });
     refreshStatus();
+    refreshFiles();
   </script>
 </body>
 </html>
@@ -411,11 +581,25 @@ def _handler_factory(config: Config, agent: Agent, brain: BrainServer) -> type[B
                     for row in agent.search(query, limit=limit)
                 ]
                 self._send_json({"results": results})
+            elif parsed.path == "/api/files":
+                self._send_json({"files": _list_uploaded_files(config)})
             else:
                 self._send_json({"error": "not found"}, HTTPStatus.NOT_FOUND)
 
         def do_POST(self) -> None:
             parsed = urllib.parse.urlparse(self.path)
+            if parsed.path == "/api/files/upload":
+                self._handle_file_upload()
+                return
+            if parsed.path == "/api/media/song-local":
+                self._handle_song_local()
+                return
+            if parsed.path == "/api/media/music-video-local":
+                self._handle_music_video_local()
+                return
+            if parsed.path == "/api/code/vibe-plan":
+                self._handle_vibe_plan()
+                return
             if parsed.path != "/api/chat":
                 self._send_json({"error": "not found"}, HTTPStatus.NOT_FOUND)
                 return
@@ -437,6 +621,102 @@ def _handler_factory(config: Config, agent: Agent, brain: BrainServer) -> type[B
             except Exception as error:
                 self._send_json({"error": str(error)}, HTTPStatus.INTERNAL_SERVER_ERROR)
 
+        def _handle_file_upload(self) -> None:
+            try:
+                files = self._read_multipart_files()
+                saved = []
+                upload_dir = _uploads_dir(config)
+                upload_dir.mkdir(parents=True, exist_ok=True)
+                for file in files:
+                    name = _safe_filename(file["name"])
+                    target = _unique_path(upload_dir / name)
+                    target.write_bytes(file["content"])
+                    record_id = agent.memory.add(
+                        Record(
+                            category="files",
+                            subcategory="web_upload",
+                            kind="uploaded_file",
+                            title=name,
+                            content=f"Uploaded through Gima web UI: {target}",
+                            source=str(target),
+                            media_path=str(target),
+                            status="active",
+                        )
+                    )
+                    saved.append(_file_payload(target, record_id))
+                self._send_json({"files": saved})
+            except Exception as error:
+                self._send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+
+        def _handle_song_local(self) -> None:
+            try:
+                payload = self._read_json()
+                project = LocalSongSketcher(config.resolved_data_dir / "media" / "song_sketch").render(
+                    str(payload.get("prompt", "")),
+                    duration_seconds=_safe_int(str(payload.get("duration_seconds", "12")), 12),
+                )
+                record_id = agent.memory.add(
+                    Record(
+                        category="audio",
+                        subcategory="local_song_sketch",
+                        kind="generated_media",
+                        title="Local song sketch",
+                        content=project.manifest_path.read_text(encoding="utf-8"),
+                        source=str(project.manifest_path),
+                        media_path=str(project.output_path),
+                        status="review",
+                    )
+                )
+                self._send_json(_project_payload(project.output_path, project.manifest_path, record_id))
+            except Exception as error:
+                self._send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+
+        def _handle_music_video_local(self) -> None:
+            try:
+                payload = self._read_json()
+                project = LocalMusicVideoRenderer(config.resolved_data_dir / "media" / "music_video").render(
+                    Path(str(payload.get("audio_path", ""))),
+                    str(payload.get("prompt", "")),
+                    style=str(payload.get("style", "waveform")),
+                    consent=bool(payload.get("consent", False)),
+                )
+                record_id = agent.memory.add(
+                    Record(
+                        category="video",
+                        subcategory="local_music_video",
+                        kind="generated_media",
+                        title=f"Local music video: {Path(str(payload.get('audio_path', 'audio'))).name}",
+                        content=project.manifest_path.read_text(encoding="utf-8"),
+                        source=str(project.manifest_path),
+                        media_path=str(project.output_path),
+                        status="review",
+                    )
+                )
+                self._send_json(_project_payload(project.output_path, project.manifest_path, record_id))
+            except Exception as error:
+                self._send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+
+        def _handle_vibe_plan(self) -> None:
+            try:
+                payload = self._read_json()
+                plan = VibeCodingAgent(config.resolved_workspace, config.resolved_data_dir, agent.memory).plan(
+                    str(payload.get("feature", "")),
+                    max_files=_safe_int(str(payload.get("max_files", "8")), 8),
+                )
+                self._send_json(
+                    {
+                        "update_id": plan.update_request.update_id,
+                        "working_copy": str(plan.update_request.working_copy),
+                        "plan": str(plan.plan_path),
+                        "patch_skeleton": str(plan.patch_skeleton_path),
+                        "snapshot": str(plan.snapshot_path),
+                        "record_id": plan.record_id,
+                        "candidate_files": [file.__dict__ for file in plan.candidate_files],
+                    }
+                )
+            except Exception as error:
+                self._send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+
         def log_message(self, fmt: str, *args: Any) -> None:
             print(f"[web] {self.address_string()} {fmt % args}")
 
@@ -446,6 +726,30 @@ def _handler_factory(config: Config, agent: Agent, brain: BrainServer) -> type[B
             if not raw:
                 return {}
             return json.loads(raw.decode("utf-8"))
+
+        def _read_multipart_files(self) -> list[dict[str, Any]]:
+            content_type = self.headers.get("Content-Type", "")
+            match = re.search(r"boundary=([^;]+)", content_type)
+            if not match:
+                raise ValueError("multipart boundary is missing")
+            boundary = match.group(1).strip().strip('"').encode("utf-8")
+            length = _safe_int(self.headers.get("Content-Length", "0"), 0)
+            raw = self.rfile.read(max(0, min(length, 50_000_000)))
+            files: list[dict[str, Any]] = []
+            for part in raw.split(b"--" + boundary):
+                if b"filename=" not in part:
+                    continue
+                header, _, content = part.partition(b"\r\n\r\n")
+                filename_match = re.search(rb'filename="([^"]*)"', header)
+                if not filename_match:
+                    continue
+                filename = filename_match.group(1).decode("utf-8", errors="replace")
+                content = content.rstrip(b"\r\n-")
+                if filename and content:
+                    files.append({"name": filename, "content": content})
+            if not files:
+                raise ValueError("No files were uploaded")
+            return files
 
         def _send_text(self, body: str, content_type: str, status: HTTPStatus = HTTPStatus.OK) -> None:
             encoded = body.encode("utf-8")
@@ -485,6 +789,55 @@ def _count_csv_rows(path: Path) -> int:
         return 0
     with path.open(encoding="utf-8", errors="replace") as handle:
         return max(0, sum(1 for _ in handle) - 1)
+
+
+def _uploads_dir(config: Config) -> Path:
+    return config.resolved_data_dir / "web_uploads"
+
+
+def _list_uploaded_files(config: Config) -> list[dict[str, Any]]:
+    root = _uploads_dir(config)
+    if not root.exists():
+        return []
+    files = [_file_payload(path) for path in sorted(root.iterdir(), key=lambda item: item.stat().st_mtime, reverse=True) if path.is_file()]
+    return files[:50]
+
+
+def _file_payload(path: Path, record_id: str = "") -> dict[str, Any]:
+    stat = path.stat()
+    return {
+        "name": path.name,
+        "path": str(path),
+        "size_bytes": stat.st_size,
+        "content_type": mimetypes.guess_type(path.name)[0] or "application/octet-stream",
+        "record_id": record_id,
+    }
+
+
+def _project_payload(output_path: Path, manifest_path: Path, record_id: str) -> dict[str, Any]:
+    return {
+        "output": str(output_path),
+        "manifest": str(manifest_path),
+        "record_id": record_id,
+        "size_bytes": output_path.stat().st_size if output_path.exists() else 0,
+    }
+
+
+def _safe_filename(name: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9._ -]+", "_", Path(name).name).strip(" .")
+    return cleaned or f"upload_{int(time.time())}"
+
+
+def _unique_path(path: Path) -> Path:
+    if not path.exists():
+        return path
+    stem = path.stem
+    suffix = path.suffix
+    for index in range(1, 1000):
+        candidate = path.with_name(f"{stem}_{index}{suffix}")
+        if not candidate.exists():
+            return candidate
+    return path.with_name(f"{stem}_{uuid.uuid4().hex[:8]}{suffix}")
 
 
 def _safe_int(value: str, default: int) -> int:

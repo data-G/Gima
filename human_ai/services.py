@@ -3,10 +3,12 @@ from __future__ import annotations
 import html
 import ipaddress
 import json
+import math
 import os
 import shutil
 import socket
 import subprocess
+import wave
 import time
 import urllib.error
 import urllib.parse
@@ -407,6 +409,14 @@ class MusicVideoProject:
 
 
 @dataclass
+class SongSketchProject:
+    project_dir: Path
+    output_path: Path
+    manifest_path: Path
+    prompt_path: Path
+
+
+@dataclass
 class VideoEvalResult:
     video_path: Path
     report_path: Path
@@ -573,6 +583,85 @@ class LocalMusicVideoRenderer:
         }
         manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
         return MusicVideoProject(project_dir, output_path, manifest_path, prompt_path)
+
+
+class LocalSongSketcher:
+    """Tiny offline song sketch generator for rough local ideas."""
+
+    SCALES = {
+        "calm": [261.63, 293.66, 329.63, 392.00, 440.00],
+        "happy": [261.63, 329.63, 392.00, 523.25, 659.25],
+        "dark": [220.00, 261.63, 311.13, 392.00, 466.16],
+        "default": [246.94, 293.66, 329.63, 369.99, 440.00],
+    }
+
+    def __init__(self, output_dir: Path):
+        self.output_dir = output_dir
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+
+    def render(self, prompt: str, duration_seconds: int = 12) -> SongSketchProject:
+        prompt = " ".join(prompt.strip().split())
+        if not prompt:
+            raise ValueError("Song prompt is required")
+        duration = max(4, min(duration_seconds, 60))
+        project_dir = self.output_dir / f"song_sketch_{uuid.uuid4().hex[:12]}"
+        project_dir.mkdir(parents=True, exist_ok=True)
+        output_path = project_dir / "song_sketch.wav"
+        prompt_path = project_dir / "prompt.txt"
+        manifest_path = project_dir / "manifest.json"
+        prompt_path.write_text(prompt + "\n", encoding="utf-8")
+        scale = self._scale(prompt)
+        self._write_wav(output_path, prompt, scale, duration)
+        manifest = {
+            "kind": "local_song_sketch",
+            "prompt": prompt,
+            "duration_seconds": duration,
+            "renderer": "python_wave_synth",
+            "output": str(output_path),
+            "scale": scale,
+            "status": "rendered",
+            "limits": [
+                "This is a rough offline instrumental sketch, not a full Suno-style vocal song.",
+                "Use it for local prototyping and prompts before connecting stronger approved generators.",
+            ],
+        }
+        manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        return SongSketchProject(project_dir, output_path, manifest_path, prompt_path)
+
+    def _scale(self, prompt: str) -> List[float]:
+        lower = prompt.casefold()
+        if any(word in lower for word in {"calm", "soft", "sleep", "relax"}):
+            return self.SCALES["calm"]
+        if any(word in lower for word in {"happy", "bright", "dance", "pop"}):
+            return self.SCALES["happy"]
+        if any(word in lower for word in {"dark", "cinematic", "sad", "deep"}):
+            return self.SCALES["dark"]
+        return self.SCALES["default"]
+
+    def _write_wav(self, path: Path, prompt: str, scale: List[float], duration: int) -> None:
+        sample_rate = 44_100
+        beat_seconds = 0.5
+        amplitude = 12_000
+        prompt_seed = sum(ord(char) for char in prompt)
+        total_samples = sample_rate * duration
+        with wave.open(str(path), "wb") as handle:
+            handle.setnchannels(1)
+            handle.setsampwidth(2)
+            handle.setframerate(sample_rate)
+            frames = bytearray()
+            for sample in range(total_samples):
+                beat = int(sample / (sample_rate * beat_seconds))
+                frequency = scale[(beat + prompt_seed) % len(scale)]
+                bass = scale[(beat // 2 + prompt_seed) % len(scale)] / 2
+                t = sample / sample_rate
+                envelope = min(1.0, (sample % int(sample_rate * beat_seconds)) / 2205)
+                value = (
+                    math.sin(2 * math.pi * frequency * t) * 0.72
+                    + math.sin(2 * math.pi * bass * t) * 0.28
+                )
+                value *= envelope * amplitude
+                frames.extend(int(max(-32767, min(32767, value))).to_bytes(2, "little", signed=True))
+            handle.writeframes(bytes(frames))
 
 
 class VideoQualityEvaluator:
