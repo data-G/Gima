@@ -287,6 +287,22 @@ class GimaControlCenterTests(unittest.TestCase):
         self.assertIn("[started] Evaluation", output)
         self.assertIn("current eval cases: 5", output)
 
+    def test_scale_report_creates_scale_baseline(self):
+        output = self.run_gima("scale-report")
+        scale_dir = Path(self.temp.name) / ".human-ai" / "scale"
+
+        self.assertIn("Scale report saved", output)
+        self.assertIn("Recommendation:", output)
+        self.assertTrue((scale_dir / "scale_reports.csv").exists())
+
+    def test_world_checklist_reflects_scale_progress(self):
+        self.run_gima("scale-report")
+        with patch("human_ai.gima.BrainServer.status") as status:
+            status.return_value = {"running": False, "pid": None, "models": None}
+            output = self.run_gima("world-checklist")
+        self.assertIn("[started] Scale", output)
+        self.assertIn("saved scale reports: 1", output)
+
     def test_daily_learn_uses_selected_provider(self):
         with patch("human_ai.agent.Agent.daily_teacher_learning") as daily:
             daily.return_value = [("chatgpt", "memory", "lesson")]

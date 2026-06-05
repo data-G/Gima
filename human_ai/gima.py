@@ -17,6 +17,7 @@ from .dream import DreamIdea, DreamStore
 from .evals import EvalStore
 from .memory import Record
 from .permissions import PermissionManager
+from .scale import ScaleReporter
 from .secrets import SECRET_ENV_KEYS, configure_teacher_secrets, load_secret_env, secrets_env_path
 from .self_update import SelfUpdateManager
 from .services import dependency_report
@@ -129,6 +130,8 @@ def parser() -> argparse.ArgumentParser:
 
     eval_results = commands.add_parser("eval-results", help="Show recent Gima evaluation results")
     eval_results.add_argument("--limit", type=int, default=20)
+
+    commands.add_parser("scale-report", help="Measure Gima scale, storage, eval, and model readiness")
 
     daily_learn = commands.add_parser("daily-learn", help="Learn from available AI providers for a bounded time")
     daily_learn.add_argument("--minutes", type=float, default=60)
@@ -456,6 +459,7 @@ def main(argv=None) -> int:
     brain = BrainServer(config, agent.memory)
     dreams = DreamStore(config.resolved_data_dir)
     evals = EvalStore(config.resolved_data_dir)
+    scale = ScaleReporter(config)
     permissions = PermissionManager(config, agent.memory)
     self_updates = SelfUpdateManager(config.resolved_workspace, config.resolved_data_dir)
     try:
@@ -580,6 +584,15 @@ def main(argv=None) -> int:
             print(f"Results CSV: {summary.results_path}")
         elif args.command == "eval-results":
             _print_eval_results(evals.latest_results(args.limit))
+        elif args.command == "scale-report":
+            report = scale.collect()
+            print(f"Scale report saved: {report.path}")
+            print(f"Data size: {report.data_size_mb:.2f} MB")
+            print(f"Free disk: {report.free_disk_gb:.2f} GB")
+            print(f"Knowledge rows: {report.knowledge_rows}")
+            print(f"Conversation rows: {report.conversation_rows}")
+            print(f"Eval results: {report.eval_results}")
+            print(f"Recommendation: {report.recommendation}")
         elif args.command == "daily-learn":
             if not args.scheduled:
                 permissions.require("web")

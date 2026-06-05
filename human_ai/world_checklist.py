@@ -27,6 +27,7 @@ def build_world_checklist(agent: Agent, brain: BrainServer) -> List[ChecklistIte
     pending_reviews = agent.memory.list_source_reviews("pending", 500)
     eval_cases = _count_csv_rows(agent.config.resolved_data_dir / "evals" / "cases.csv")
     eval_results = _count_csv_rows(agent.config.resolved_data_dir / "evals" / "results.csv")
+    scale_reports = _count_csv_rows(agent.config.resolved_data_dir / "scale" / "scale_reports.csv")
 
     missing_tools = [name for name, ok in deps.items() if not ok]
     ready_providers = [row["provider"] for row in providers if row["available"] == "yes"]
@@ -110,8 +111,11 @@ def build_world_checklist(agent: Agent, brain: BrainServer) -> List[ChecklistIte
         ChecklistItem(
             "Scale",
             "Run faster with better hardware, bigger context, and stronger retrieval.",
-            "needs work",
-            "Upgrade hardware before expecting frontier-model performance; optimize retrieval before model size.",
+            "started" if scale_reports else "needs work",
+            (
+                f"Run `python3 -m human_ai.gima scale-report`; saved scale reports: {scale_reports}. "
+                "Use the report before adding larger models, bigger context, or more retrieval data."
+            ),
         ),
         ChecklistItem(
             "Product",
