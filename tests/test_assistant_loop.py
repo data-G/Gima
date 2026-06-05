@@ -240,6 +240,20 @@ class LocalAssistantTests(unittest.TestCase):
         self.assertIn("video-generation.md", reply.message)
         learn_research.assert_called_once_with("video-generation")
 
+    def test_voice_can_learn_veo_style_video_research(self):
+        assistant = self.make_assistant()
+        assistant.config.permissions.require_scoped_grants = False
+        with patch.object(
+            assistant.agent,
+            "learn_research_profile",
+            return_value=Path("/tmp/veo-style-video-systems.md"),
+        ) as learn_research:
+            reply = assistant.run_text_command("study Veo 3 video with audio research")
+        self.assertEqual(reply.action, "research_learn")
+        self.assertIn("Veo-style video systems", reply.message)
+        self.assertIn("veo-style-video-systems.md", reply.message)
+        learn_research.assert_called_once_with("veo-style-video-systems")
+
     def test_voice_can_learn_frontier_ai_systems_research(self):
         assistant = self.make_assistant()
         assistant.config.permissions.require_scoped_grants = False

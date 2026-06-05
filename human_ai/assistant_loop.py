@@ -260,6 +260,14 @@ class LocalAssistant:
                 f"I learned AI-human systems research from public papers and sources, saved it in {path}, and indexed it in research memory.",
                 "research_learn",
             )
+        if self._is_veo_style_video_research_request(normalized):
+            self.permissions.require("web")
+            self.terminal_event("ACTION", "learn research: veo-style-video-systems")
+            path = self.agent.learn_research_profile("veo-style-video-systems")
+            return AssistantReply(
+                f"I learned Veo-style video systems research from public sources, saved it in {path}, and indexed it in research memory.",
+                "research_learn",
+            )
         if self._is_video_generation_research_request(normalized):
             self.permissions.require("web")
             self.terminal_event("ACTION", "learn research: video-generation")
@@ -519,6 +527,32 @@ class LocalAssistant:
                 "video diffusion",
                 "ai video",
                 "generative video",
+            }
+        )
+        return has_learn_intent and has_topic
+
+    def _is_veo_style_video_research_request(self, normalized: str) -> bool:
+        has_learn_intent = any(
+            phrase in normalized
+            for phrase in {
+                "learn",
+                "research",
+                "study",
+                "papers",
+                "know about",
+                "improve",
+            }
+        )
+        has_topic = any(
+            phrase in normalized
+            for phrase in {
+                "veo",
+                "veo 3",
+                "veo3",
+                "seedance",
+                "video with audio",
+                "audio video generation",
+                "synchronized audio video",
             }
         )
         return has_learn_intent and has_topic

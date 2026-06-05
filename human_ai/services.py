@@ -406,6 +406,13 @@ class MusicVideoProject:
     prompt_path: Path
 
 
+@dataclass
+class VideoEvalResult:
+    video_path: Path
+    report_path: Path
+    score: float
+
+
 class LipSyncPlanner:
     def __init__(self, output_dir: Path):
         self.output_dir = output_dir
@@ -566,6 +573,131 @@ class LocalMusicVideoRenderer:
         }
         manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
         return MusicVideoProject(project_dir, output_path, manifest_path, prompt_path)
+
+
+class VideoQualityEvaluator:
+    """Local, research-inspired checks for generated video artifacts."""
+
+    def __init__(self, output_dir: Path):
+        self.output_dir = output_dir
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+
+    def evaluate(self, video: Path, manifest: Path | None = None) -> VideoEvalResult:
+        video_path = video.expanduser().resolve()
+        manifest_path = manifest.expanduser().resolve() if manifest else None
+        if not video_path.exists():
+            raise FileNotFoundError(f"Video file does not exist: {video_path}")
+        if video_path.suffix.casefold() not in {".mp4", ".mov", ".m4v", ".webm", ".mkv"}:
+            raise ValueError("Video eval expects a local video file")
+        metadata = self._probe(video_path)
+        manifest_data = self._manifest(manifest_path)
+        checks = self._checks(metadata, manifest_data)
+        score = round(sum(item["score"] for item in checks) / len(checks), 2)
+        report = {
+            "kind": "veo_style_local_video_eval",
+            "video": str(video_path),
+            "manifest": str(manifest_path) if manifest_path else "",
+            "score": score,
+            "checks": checks,
+            "metadata": metadata,
+            "research_dimensions": [
+                "audio-video presence",
+                "duration reliability",
+                "resolution readiness",
+                "manifest/prompt traceability",
+                "local provenance",
+            ],
+            "next_actions": [
+                "Add beat detection and audio-video sync scoring.",
+                "Add sampled-frame captioning for prompt adherence.",
+                "Add temporal consistency checks across frames.",
+                "Compare multiple renderer styles on the same audio.",
+            ],
+        }
+        report_path = self.output_dir / f"video_eval_{uuid.uuid4().hex[:12]}.json"
+        report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+        return VideoEvalResult(video_path, report_path, score)
+
+    def _probe(self, path: Path) -> Dict[str, object]:
+        if not shutil.which("ffprobe"):
+            raise RuntimeError("Video eval requires ffprobe")
+        result = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration,size:stream=codec_type,width,height,codec_name",
+                "-of",
+                "json",
+                str(path),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        return json.loads(result.stdout or "{}")
+
+    @staticmethod
+    def _manifest(path: Path | None) -> Dict[str, object]:
+        if not path:
+            return {}
+        if not path.exists():
+            raise FileNotFoundError(f"Manifest does not exist: {path}")
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    @staticmethod
+    def _checks(metadata: Dict[str, object], manifest: Dict[str, object]) -> List[Dict[str, object]]:
+        streams = metadata.get("streams", [])
+        if not isinstance(streams, list):
+            streams = []
+        has_video = any(stream.get("codec_type") == "video" for stream in streams if isinstance(stream, dict))
+        has_audio = any(stream.get("codec_type") == "audio" for stream in streams if isinstance(stream, dict))
+        video_streams = [stream for stream in streams if isinstance(stream, dict) and stream.get("codec_type") == "video"]
+        width = int(video_streams[0].get("width") or 0) if video_streams else 0
+        height = int(video_streams[0].get("height") or 0) if video_streams else 0
+        duration = float((metadata.get("format") or {}).get("duration") or 0)
+        prompt = str(manifest.get("prompt") or "").strip()
+        renderer = str(manifest.get("renderer") or "").strip()
+        return [
+            {
+                "name": "video_stream_present",
+                "passed": has_video,
+                "score": 1.0 if has_video else 0.0,
+                "detail": "Generated artifact must contain a video stream.",
+            },
+            {
+                "name": "audio_stream_present",
+                "passed": has_audio,
+                "score": 1.0 if has_audio else 0.0,
+                "detail": "Veo-style systems should preserve or generate synchronized audio.",
+            },
+            {
+                "name": "duration_nontrivial",
+                "passed": duration >= 1.0,
+                "score": 1.0 if duration >= 1.0 else 0.0,
+                "detail": f"Duration is {duration:.2f} seconds.",
+            },
+            {
+                "name": "resolution_720p_ready",
+                "passed": width >= 1280 and height >= 720,
+                "score": 1.0 if width >= 1280 and height >= 720 else 0.5 if width and height else 0.0,
+                "detail": f"Resolution is {width}x{height}.",
+            },
+            {
+                "name": "prompt_traceability",
+                "passed": bool(prompt),
+                "score": 1.0 if prompt else 0.0,
+                "detail": "Manifest should preserve the user prompt for review.",
+            },
+            {
+                "name": "renderer_provenance",
+                "passed": bool(renderer),
+                "score": 1.0 if renderer else 0.0,
+                "detail": "Manifest should identify the generator/renderer.",
+            },
+        ]
 
 
 def monitor_camera(

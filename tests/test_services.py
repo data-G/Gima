@@ -10,6 +10,7 @@ from human_ai.services import (
     LocalMusicVideoRenderer,
     SafeToolRunner,
     TeacherModelClient,
+    VideoQualityEvaluator,
     WebImporter,
 )
 
@@ -132,6 +133,32 @@ class ServiceSafetyTests(unittest.TestCase):
             self.assertIn("local_music_video", text)
             self.assertIn("make a waveform music video", text)
             self.assertIn(str(audio.resolve()), text)
+
+    def test_video_quality_evaluator_scores_manifest_and_streams(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            video = root / "video.mp4"
+            manifest = root / "manifest.json"
+            video.write_bytes(b"fake mp4")
+            manifest.write_text(
+                '{"prompt":"make a video","renderer":"ffmpeg"}',
+                encoding="utf-8",
+            )
+            ffprobe_json = (
+                b'{"streams":[{"codec_type":"video","width":1280,"height":720},'
+                b'{"codec_type":"audio","codec_name":"aac"}],"format":{"duration":"3.0","size":"1000"}}'
+            )
+
+            with patch("human_ai.services.shutil.which", return_value="/usr/bin/ffprobe"), patch(
+                "human_ai.services.subprocess.run"
+            ) as run:
+                run.return_value.stdout = ffprobe_json.decode("utf-8")
+                result = VideoQualityEvaluator(root / "eval").evaluate(video, manifest)
+
+            self.assertEqual(result.score, 1.0)
+            text = result.report_path.read_text(encoding="utf-8")
+            self.assertIn("veo_style_local_video_eval", text)
+            self.assertIn("audio_stream_present", text)
 
 
 if __name__ == "__main__":

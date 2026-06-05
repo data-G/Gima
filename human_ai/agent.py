@@ -67,6 +67,23 @@ RESEARCH_LEARNING_SOURCES = {
             "https://en.wikipedia.org/wiki/Text-to-video_model",
         ],
     },
+    "veo-style-video-systems": {
+        "title": "Veo-Style Video Systems",
+        "file": "veo-style-video-systems.md",
+        "keywords": (
+            "Veo 3 video generation native audio prompt adherence temporal consistency "
+            "creative control image to video evaluation safety watermarking audio video synchronization"
+        ),
+        "sources": [
+            "https://deepmind.google/models/veo/",
+            "https://deepmind.google/models/model-cards/veo-3-1-lite/",
+            "https://blog.google/innovation-and-ai/products/google-generative-ai-veo-imagen-3/",
+            "https://blog.google/products/gemini/photo-to-video/",
+            "https://blog.google/innovation-and-ai/models-and-research/google-labs/flow-adds-speech-expands/",
+            "https://blog.google/technology/google-labs/video-image-generation-update-december-2024/",
+            "https://openai.com/index/sora-system-card/",
+        ],
+    },
     "frontier-ai-systems": {
         "title": "Frontier AI Systems",
         "file": "frontier-ai-systems.md",

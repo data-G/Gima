@@ -85,6 +85,15 @@ class GimaControlCenterTests(unittest.TestCase):
         self.assertIn("video-generation.md", output)
         learn_research.assert_called_once_with("video-generation")
 
+    def test_learn_veo_style_video_systems_saves_brain_file(self):
+        with patch("human_ai.agent.Agent.learn_research_profile") as learn_research:
+            learn_research.return_value = (
+                Path(self.temp.name) / ".human-ai" / "brain" / "veo-style-video-systems.md"
+            )
+            output = self.run_gima("learn-research", "veo-style-video-systems")
+        self.assertIn("veo-style-video-systems.md", output)
+        learn_research.assert_called_once_with("veo-style-video-systems")
+
     def test_learn_frontier_ai_systems_saves_brain_file(self):
         with patch("human_ai.agent.Agent.learn_research_profile") as learn_research:
             learn_research.return_value = (
@@ -388,6 +397,24 @@ class GimaControlCenterTests(unittest.TestCase):
         self.assertIn("Rendered local music video", output)
         self.assertIn("Stored render as", output)
         render.assert_called_once()
+
+    def test_video_eval_local_command_stores_report(self):
+        from human_ai.services import VideoEvalResult
+
+        project_dir = Path(self.temp.name) / "project"
+        project_dir.mkdir()
+        video = project_dir / "video.mp4"
+        video.write_bytes(b"fake mp4")
+        report = project_dir / "video_eval.json"
+        report.write_text('{"kind":"veo_style_local_video_eval"}', encoding="utf-8")
+
+        with patch("human_ai.gima.VideoQualityEvaluator.evaluate") as evaluate:
+            evaluate.return_value = VideoEvalResult(video, report, 1.0)
+            output = self.run_gima("video-eval-local", str(video))
+
+        self.assertIn("Video eval score: 1.00/1.00", output)
+        self.assertIn("Stored eval as", output)
+        evaluate.assert_called_once()
 
     def test_daily_learn_uses_selected_provider(self):
         with patch("human_ai.agent.Agent.daily_teacher_learning") as daily:

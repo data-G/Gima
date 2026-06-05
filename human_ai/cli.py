@@ -20,6 +20,7 @@ from .services import (
     MediaAnalyzer,
     MediaCapture,
     SafeToolRunner,
+    VideoQualityEvaluator,
     Voice,
     dependency_report,
     monitor_camera,
@@ -122,6 +123,10 @@ def parser() -> argparse.ArgumentParser:
     music_video.add_argument("--prompt", required=True, help="Natural-language description saved with the project")
     music_video.add_argument("--style", choices=["waveform", "spectrum"], default="waveform")
     music_video.add_argument("--consent", action="store_true", help="Confirm you have rights/consent for the audio")
+
+    video_eval = commands.add_parser("video-eval-local", help="Evaluate a generated MP4 with local Veo-style checks")
+    video_eval.add_argument("video", help="Local generated MP4/video path")
+    video_eval.add_argument("--manifest", help="Optional generation manifest JSON")
 
     wake = commands.add_parser("wake", help="Process a transcript for the configured wake word")
     wake.add_argument("transcript", help="Speech transcript from any language")
@@ -356,6 +361,27 @@ def main(argv=None) -> int:
             print(f"Rendered local music video: {project.output_path}")
             print(f"Manifest: {project.manifest_path}")
             print(f"Stored render as {record_id}")
+        elif args.command == "video-eval-local":
+            permissions.require("files")
+            result = VideoQualityEvaluator(config.resolved_data_dir / "evals" / "video").evaluate(
+                Path(args.video),
+                Path(args.manifest) if args.manifest else None,
+            )
+            record_id = agent.memory.add(
+                Record(
+                    category="eval",
+                    subcategory="video_generation",
+                    kind="video_eval",
+                    title=f"Video eval: {Path(args.video).name}",
+                    content=result.report_path.read_text(encoding="utf-8"),
+                    source=str(result.report_path),
+                    media_path=str(result.video_path),
+                    status="review",
+                )
+            )
+            print(f"Video eval score: {result.score:.2f}/1.00")
+            print(f"Report: {result.report_path}")
+            print(f"Stored eval as {record_id}")
         elif args.command == "wake":
             result = WakeAssistant(config, agent.memory).respond(
                 args.transcript, capture_photo=args.capture_photo
