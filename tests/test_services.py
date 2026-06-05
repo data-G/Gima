@@ -13,6 +13,7 @@ from human_ai.services import (
     VideoQualityEvaluator,
     WebImporter,
 )
+from human_ai.vibe_code import VibeCodingAgent
 
 
 class ServiceSafetyTests(unittest.TestCase):
@@ -159,6 +160,31 @@ class ServiceSafetyTests(unittest.TestCase):
             text = result.report_path.read_text(encoding="utf-8")
             self.assertIn("veo_style_local_video_eval", text)
             self.assertIn("audio_stream_present", text)
+
+    def test_vibe_coding_agent_creates_offline_plan_in_working_copy(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "human_ai").mkdir()
+            (root / "human_ai" / "gima.py").write_text("def cli():\n    pass\n", encoding="utf-8")
+            (root / "tests").mkdir()
+            (root / "tests" / "test_gima.py").write_text("def test_cli():\n    pass\n", encoding="utf-8")
+            memory = MemoryStore(root / ".human-ai")
+
+            plan = VibeCodingAgent(root, root / ".human-ai", memory).plan(
+                "add vibe coding cli tests",
+                max_files=5,
+            )
+
+            self.assertTrue(plan.plan_path.exists())
+            self.assertTrue(plan.patch_skeleton_path.exists())
+            self.assertTrue(plan.snapshot_path.exists())
+            self.assertTrue((plan.update_request.working_copy / "human_ai" / "gima.py").exists())
+            text = plan.plan_path.read_text(encoding="utf-8")
+            self.assertIn("Offline Vibe Coding Plan", text)
+            self.assertIn("human_ai/gima.py", text)
+            self.assertIn("tests/test_gima.py", text)
+            rows = [row for row in memory.list_by_status("review") if row["category"] == "code"]
+            self.assertEqual(rows[0]["subcategory"], "vibe_agent")
 
 
 if __name__ == "__main__":

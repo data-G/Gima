@@ -101,7 +101,7 @@ def build_world_checklist(agent: Agent, brain: BrainServer) -> List[ChecklistIte
             "Autonomy",
             "Plan, code, test, summarize, and ask permission only when needed.",
             "started",
-            "Add task queues and explicit approval checkpoints for higher-risk actions.",
+            "Use `vibe-code-plan` for offline copied-workspace code adjustments, then sync only after approval.",
         ),
         ChecklistItem(
             "Multimodal Creation",

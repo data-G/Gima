@@ -490,6 +490,23 @@ class GimaControlCenterTests(unittest.TestCase):
         self.assertEqual(updated_manifest["status"], "synced")
         self.assertTrue(Path(updated_manifest["sync_backup_path"]).exists())
 
+    def test_vibe_code_plan_command_creates_reviewable_self_update(self):
+        (Path(self.temp.name) / "human_ai").mkdir()
+        (Path(self.temp.name) / "human_ai" / "gima.py").write_text("def main():\n    pass\n", encoding="utf-8")
+
+        output = self.run_gima("vibe-code-plan", "add", "offline", "coding", "agent")
+
+        self.assertIn("Prepared offline vibe coding update", output)
+        self.assertIn("Patch skeleton:", output)
+        manifest_path = next((Path(self.temp.name) / ".human-ai" / "self_updates").glob("requests/update_*/manifest.json"))
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        self.assertEqual(manifest["agent_kind"], "offline_vibe_coding")
+        self.assertTrue(Path(manifest["vibe_code_plan_path"]).exists())
+        self.assertTrue(Path(manifest["patch_skeleton_path"]).exists())
+        self.assertTrue(Path(manifest["repo_snapshot_path"]).exists())
+        memory = Path(self.temp.name) / ".human-ai" / "csv" / "knowledge.csv"
+        self.assertIn("vibe_agent", memory.read_text(encoding="utf-8"))
+
     def test_heart_list_requires_parent_password(self):
         output = io.StringIO()
         with redirect_stdout(output):

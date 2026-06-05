@@ -24,6 +24,7 @@ from .secrets import SECRET_ENV_KEYS, configure_teacher_secrets, load_secret_env
 from .self_update import SelfUpdateManager
 from .services import LocalMusicVideoRenderer, VideoQualityEvaluator, dependency_report
 from .world_checklist import build_world_checklist, format_world_checklist
+from .vibe_code import VibeCodingAgent
 
 
 DEFAULT_CONFIG = "config.local.json"
@@ -189,6 +190,10 @@ def parser() -> argparse.ArgumentParser:
     self_sync.add_argument("--password", help="Parent password. Prefer GIMA_PARENT_PASSWORD for scripts.")
     self_sync.add_argument("--force", action="store_true", help="Sync even if live workspace has uncommitted changes")
     self_sync.add_argument("--restart", action="store_true", help="Restart the local brain after syncing")
+
+    vibe_code = commands.add_parser("vibe-code-plan", help="Create an offline copied-workspace coding plan")
+    vibe_code.add_argument("feature", nargs="+")
+    vibe_code.add_argument("--max-files", type=int, default=10, help="Maximum candidate files to include")
 
     heart_sources = commands.add_parser("heart-sources", help="List external AI policy systems Gima can review")
     heart_sources.add_argument("--password", help="Parent password. Prefer GIMA_PARENT_PASSWORD for scripts.")
@@ -768,6 +773,23 @@ def main(argv=None) -> int:
                 brain.stop()
                 pid = brain.start()
                 print(f"Gima brain restarted with pid {pid}")
+        elif args.command == "vibe-code-plan":
+            permissions.require("files")
+            plan = VibeCodingAgent(config.resolved_workspace, config.resolved_data_dir, agent.memory).plan(
+                " ".join(args.feature),
+                max_files=args.max_files,
+            )
+            print(f"Prepared offline vibe coding update {plan.update_request.update_id}")
+            print(f"Working copy: {plan.update_request.working_copy}")
+            print(f"Plan: {plan.plan_path}")
+            print(f"Patch skeleton: {plan.patch_skeleton_path}")
+            print(f"Snapshot: {plan.snapshot_path}")
+            print(f"Stored plan as {plan.record_id}")
+            if plan.candidate_files:
+                print("Candidate files:")
+                for file in plan.candidate_files:
+                    print(f"- {file.path} score={file.score} reason={file.reason}")
+            print("After editing/testing the working copy, run self-update-ready.")
         elif args.command == "heart-sources":
             _require_parent(agent, permissions, args.password)
             _print_heart_sources(agent)
