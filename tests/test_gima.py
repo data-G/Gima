@@ -303,6 +303,43 @@ class GimaControlCenterTests(unittest.TestCase):
         self.assertIn("[started] Scale", output)
         self.assertIn("saved scale reports: 1", output)
 
+    def test_model_levels_list_configured_tiers(self):
+        output = self.run_gima("model-levels")
+        self.assertIn("fast", output)
+        self.assertIn("strong", output)
+
+    def test_model_use_updates_configured_level(self):
+        model_dir = Path(self.temp.name) / "models"
+        model_dir.mkdir()
+        shard_1 = model_dir / "strong-00001-of-00002.gguf"
+        shard_2 = model_dir / "strong-00002-of-00002.gguf"
+        shard_1.write_text("fake", encoding="utf-8")
+        shard_2.write_text("fake", encoding="utf-8")
+        raw = json.loads(self.config_path.read_text(encoding="utf-8"))
+        raw["model"]["profiles"] = {
+            "strong": {
+                "name": "Test Strong",
+                "model": "test-strong",
+                "model_path": str(shard_1),
+                "context_size": 8192,
+                "max_tokens": 128,
+                "files": [
+                    {"name": shard_1.name, "url": "https://example.com/1"},
+                    {"name": shard_2.name, "url": "https://example.com/2"},
+                ],
+            }
+        }
+        self.config_path.write_text(json.dumps(raw), encoding="utf-8")
+
+        output = self.run_gima("model-use", "strong")
+        updated = json.loads(self.config_path.read_text(encoding="utf-8"))
+
+        self.assertIn("Gima model level set to strong", output)
+        self.assertEqual(updated["model"]["active_level"], "strong")
+        self.assertEqual(updated["model"]["model"], "test-strong")
+        self.assertEqual(updated["model"]["context_size"], 8192)
+        self.assertEqual(updated["model"]["max_tokens"], 128)
+
     def test_daily_learn_uses_selected_provider(self):
         with patch("human_ai.agent.Agent.daily_teacher_learning") as daily:
             daily.return_value = [("chatgpt", "memory", "lesson")]

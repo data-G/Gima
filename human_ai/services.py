@@ -161,7 +161,12 @@ class LocalModel:
         if not self.config.enabled:
             raise RuntimeError("Local model is disabled in the configuration")
         payload = json.dumps(
-            {"model": self.config.model, "messages": messages, "temperature": 0.2}
+            {
+                "model": self.config.model,
+                "messages": messages,
+                "temperature": 0.2,
+                "max_tokens": self.config.max_tokens,
+            }
         ).encode("utf-8")
         request = urllib.request.Request(
             f"{self.config.base_url.rstrip('/')}/chat/completions",

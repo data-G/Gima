@@ -6,14 +6,17 @@
     "enabled": false,
     "base_url": "http://127.0.0.1:8080/v1",
     "model": "local-model",
+    "active_level": "fast",
     "timeout_seconds": 90,
     "model_path": "~/.local/share/gima/models/qwen2.5-1.5b-instruct-q4_k_m.gguf",
     "context_size": 4096,
+    "max_tokens": 384,
     "host": "127.0.0.1",
     "port": 8080,
     "device": "none",
     "gpu_layers": 0,
-    "warmup": false
+    "warmup": false,
+    "profiles": {}
   },
   "web": {
     "allowed_domains": []

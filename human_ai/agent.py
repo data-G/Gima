@@ -516,11 +516,17 @@ class Agent:
             )
             self.memory.append_conversation(self.session_id, "assistant", answer)
             return answer
-        matches = self.search(message, limit=6)
+        compact_prompt = self.config.model.active_level == "strong"
+        memory_limit = 2 if compact_prompt else 6
+        memory_chars = 420 if compact_prompt else 1200
+        matches = self.search(message, limit=memory_limit)
         context = "\n\n".join(
-            f"[{row['id']}] {row['title']}\n{row['content'][:1200]}" for row in matches
+            f"[{row['id']}] {row['title']}\n{row['content'][:memory_chars]}" for row in matches
         )
         if self.config.model.enabled:
+            heart_text = self.heart.active_text()
+            if compact_prompt:
+                heart_text = heart_text[:900]
             prompt = (
                 "You are Gima, a local personal AI assistant running on this Mac. "
                 "Speak in clear English. Be conversational, practical, and concise. "
@@ -531,7 +537,7 @@ class Agent:
                 "Do not claim you used the camera, microphone, files, web, or shell unless a tool result confirms it. "
                 "When the user asks for an action, explain whether it is available and what permission is needed. "
                 "Keep answers short unless the user asks for detail.\n\nRetrieved local memory:\n"
-                f"{context or '[no matching memory]'}\n\nGima heart policies:\n{self.heart.active_text()}"
+                f"{context or '[no matching memory]'}\n\nGima heart policies:\n{heart_text}"
             )
             answer = self.model.complete(
                 [{"role": "system", "content": prompt}, {"role": "user", "content": message}]

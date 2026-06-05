@@ -15,6 +15,7 @@ from .brain import BrainServer
 from .config import load_config
 from .dream import DreamIdea, DreamStore
 from .evals import EvalStore
+from .model_levels import ModelLevelManager
 from .memory import Record
 from .permissions import PermissionManager
 from .scale import ScaleReporter
@@ -199,6 +200,15 @@ def parser() -> argparse.ArgumentParser:
     violation.add_argument("--source", default="manual")
 
     commands.add_parser("doctor", help="Show optional local capabilities")
+
+    commands.add_parser("model-levels", help="List configured local model levels")
+
+    model_download = commands.add_parser("model-download", help="Download a configured local model level")
+    model_download.add_argument("level", choices=["fast", "strong"])
+
+    model_use = commands.add_parser("model-use", help="Switch Gima to a configured local model level")
+    model_use.add_argument("level", choices=["fast", "strong"])
+    model_use.add_argument("--restart", action="store_true", help="Restart the local brain after switching")
     return root
 
 
@@ -378,6 +388,18 @@ def _print_eval_results(rows) -> None:
         print()
 
 
+def _print_model_levels(manager: ModelLevelManager, active_level: str) -> None:
+    for level in manager.levels():
+        marker = "active" if level.level == active_level else "ready" if level.available else "missing"
+        print(f"- {level.level}: {level.name} [{marker}]")
+        print(f"  model: {level.model}")
+        print(f"  path: {level.model_path}")
+        print(f"  context: {level.context_size}")
+        print(f"  about: {level.description}")
+        if level.source:
+            print(f"  source: {level.source}")
+
+
 def _teacher_setup_providers(values: list[str] | None) -> list[str]:
     if not values or "all" in values:
         return ["openai", "gemini"]
@@ -460,6 +482,7 @@ def main(argv=None) -> int:
     dreams = DreamStore(config.resolved_data_dir)
     evals = EvalStore(config.resolved_data_dir)
     scale = ScaleReporter(config)
+    model_levels = ModelLevelManager(config, args.config)
     permissions = PermissionManager(config, agent.memory)
     self_updates = SelfUpdateManager(config.resolved_workspace, config.resolved_data_dir)
     try:
@@ -473,6 +496,22 @@ def main(argv=None) -> int:
             _print_status(agent, brain, args.config)
         elif args.command == "doctor":
             print(json.dumps(dependency_report(), indent=2))
+        elif args.command == "model-levels":
+            _print_model_levels(model_levels, config.model.active_level)
+        elif args.command == "model-download":
+            paths = model_levels.download(args.level)
+            for path in paths:
+                print(f"Ready: {path}")
+        elif args.command == "model-use":
+            values = model_levels.apply_level(args.level)
+            print(f"Gima model level set to {args.level}")
+            print(f"Model: {values['model']}")
+            print(f"Model path: {values['model_path']}")
+            print(f"Context size: {values['context_size']}")
+            if args.restart:
+                brain.stop()
+                pid = brain.start()
+                print(f"Gima brain restarted with pid {pid}")
         elif args.command == "talk":
             if args.voice:
                 return LocalAssistant(agent).run_conversation(
