@@ -361,6 +361,34 @@ class GimaControlCenterTests(unittest.TestCase):
             output = self.run_gima("world-checklist")
         self.assertIn("Tracked capability rows:", output)
 
+    def test_music_video_local_command_stores_render(self):
+        from human_ai.services import MusicVideoProject
+
+        audio = Path(self.temp.name) / "song.mp3"
+        audio.write_bytes(b"fake mp3")
+        project_dir = Path(self.temp.name) / "project"
+        project_dir.mkdir()
+        output_path = project_dir / "output_music_video.mp4"
+        output_path.write_bytes(b"fake mp4")
+        manifest_path = project_dir / "manifest.json"
+        manifest_path.write_text('{"kind":"local_music_video"}', encoding="utf-8")
+        prompt_path = project_dir / "prompt.txt"
+        prompt_path.write_text("prompt", encoding="utf-8")
+
+        with patch("human_ai.gima.LocalMusicVideoRenderer.render") as render:
+            render.return_value = MusicVideoProject(project_dir, output_path, manifest_path, prompt_path)
+            output = self.run_gima(
+                "music-video-local",
+                str(audio),
+                "--prompt",
+                "make a local waveform video",
+                "--consent",
+            )
+
+        self.assertIn("Rendered local music video", output)
+        self.assertIn("Stored render as", output)
+        render.assert_called_once()
+
     def test_daily_learn_uses_selected_provider(self):
         with patch("human_ai.agent.Agent.daily_teacher_learning") as daily:
             daily.return_value = [("chatgpt", "memory", "lesson")]

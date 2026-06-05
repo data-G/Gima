@@ -5,7 +5,13 @@ from unittest.mock import patch
 
 from human_ai.config import Config
 from human_ai.memory import MemoryStore
-from human_ai.services import LipSyncPlanner, SafeToolRunner, TeacherModelClient, WebImporter
+from human_ai.services import (
+    LipSyncPlanner,
+    LocalMusicVideoRenderer,
+    SafeToolRunner,
+    TeacherModelClient,
+    WebImporter,
+)
 
 
 class ServiceSafetyTests(unittest.TestCase):
@@ -91,6 +97,41 @@ class ServiceSafetyTests(unittest.TestCase):
             self.assertIn("make a respectful lip sync performance", text)
             self.assertIn(str(audio.resolve()), text)
             self.assertIn(str(face.resolve()), text)
+
+    def test_local_music_video_renderer_requires_consent(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            audio = root / "song.mp3"
+            audio.write_bytes(b"fake mp3")
+            with self.assertRaises(PermissionError):
+                LocalMusicVideoRenderer(root / "out").render(audio, "make video", consent=False)
+
+    def test_local_music_video_renderer_creates_manifest(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            audio = root / "song.mp3"
+            audio.write_bytes(b"fake mp3")
+
+            def fake_run(command, **kwargs):
+                output = Path(command[-1])
+                output.write_bytes(b"fake mp4")
+                return None
+
+            with patch("human_ai.services.shutil.which", return_value="/usr/bin/ffmpeg"), patch(
+                "human_ai.services.subprocess.run", side_effect=fake_run
+            ):
+                project = LocalMusicVideoRenderer(root / "out").render(
+                    audio,
+                    "make a waveform music video",
+                    style="waveform",
+                    consent=True,
+                )
+
+            self.assertTrue(project.output_path.exists())
+            text = project.manifest_path.read_text(encoding="utf-8")
+            self.assertIn("local_music_video", text)
+            self.assertIn("make a waveform music video", text)
+            self.assertIn(str(audio.resolve()), text)
 
 
 if __name__ == "__main__":

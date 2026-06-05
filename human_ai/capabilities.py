@@ -178,6 +178,15 @@ CAPABILITY_SPECS: List[CapabilitySpec] = [
         _planned,
     ),
     CapabilitySpec(
+        "local_music_video",
+        "Creation",
+        "Local MP3/audio-to-video visualizer rendering",
+        "Offline ffmpeg renderer creates waveform or spectrum MP4 videos from consented audio.",
+        "Add beat detection, templates, lyric captions, and optional local image/video overlays.",
+        "https://ffmpeg.org/ffmpeg-filters.html",
+        _started_when("ffmpeg"),
+    ),
+    CapabilitySpec(
         "lip_sync",
         "Creation",
         "Lip-sync project planning from one prompt",

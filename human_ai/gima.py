@@ -22,7 +22,7 @@ from .permissions import PermissionManager
 from .scale import ScaleReporter
 from .secrets import SECRET_ENV_KEYS, configure_teacher_secrets, load_secret_env, secrets_env_path
 from .self_update import SelfUpdateManager
-from .services import dependency_report
+from .services import LocalMusicVideoRenderer, dependency_report
 from .world_checklist import build_world_checklist, format_world_checklist
 
 
@@ -140,6 +140,12 @@ def parser() -> argparse.ArgumentParser:
     capabilities_list.add_argument("--limit", type=int, default=100)
 
     commands.add_parser("capabilities-refresh", help="Refresh Gima's capability registry CSV")
+
+    music_video = commands.add_parser("music-video-local", help="Render an MP3/audio file into a local MP4 visualizer")
+    music_video.add_argument("audio", help="MP3 or other local audio file")
+    music_video.add_argument("--prompt", required=True, help="Natural-language description saved with the project")
+    music_video.add_argument("--style", choices=["waveform", "spectrum"], default="waveform")
+    music_video.add_argument("--consent", action="store_true", help="Confirm you have rights/consent for the audio")
 
     daily_learn = commands.add_parser("daily-learn", help="Learn from available AI providers for a bounded time")
     daily_learn.add_argument("--minutes", type=float, default=60)
@@ -669,6 +675,29 @@ def main(argv=None) -> int:
             if not capabilities.capabilities_path.exists():
                 capabilities.build(agent, brain)
             _print_capabilities(capabilities.list_rows(), args.status, args.limit)
+        elif args.command == "music-video-local":
+            permissions.require("files")
+            project = LocalMusicVideoRenderer(config.resolved_data_dir / "media" / "music_video").render(
+                Path(args.audio),
+                args.prompt,
+                style=args.style,
+                consent=args.consent,
+            )
+            record_id = agent.memory.add(
+                Record(
+                    category="video",
+                    subcategory="local_music_video",
+                    kind="generated_media",
+                    title=f"Local music video: {Path(args.audio).name}",
+                    content=project.manifest_path.read_text(encoding="utf-8"),
+                    source=str(project.manifest_path),
+                    media_path=str(project.output_path),
+                    status="review",
+                )
+            )
+            print(f"Rendered local music video: {project.output_path}")
+            print(f"Manifest: {project.manifest_path}")
+            print(f"Stored render as {record_id}")
         elif args.command == "daily-learn":
             if not args.scheduled:
                 permissions.require("web")

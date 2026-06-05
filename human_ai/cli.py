@@ -16,6 +16,7 @@ from .readers import read_file
 from .scene import LocalPersonDetector, save_observation
 from .services import (
     LipSyncPlanner,
+    LocalMusicVideoRenderer,
     MediaAnalyzer,
     MediaCapture,
     SafeToolRunner,
@@ -115,6 +116,12 @@ def parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Confirm you have rights/consent for the face/person and audio",
     )
+
+    music_video = commands.add_parser("music-video-local", help="Render an MP3/audio file into a local MP4 visualizer")
+    music_video.add_argument("audio", help="MP3 or other local audio file")
+    music_video.add_argument("--prompt", required=True, help="Natural-language description saved with the project")
+    music_video.add_argument("--style", choices=["waveform", "spectrum"], default="waveform")
+    music_video.add_argument("--consent", action="store_true", help="Confirm you have rights/consent for the audio")
 
     wake = commands.add_parser("wake", help="Process a transcript for the configured wake word")
     wake.add_argument("transcript", help="Speech transcript from any language")
@@ -326,6 +333,29 @@ def main(argv=None) -> int:
             print(f"Created lip-sync project: {project.project_dir}")
             print(f"Manifest: {project.manifest_path}")
             print(f"Stored plan as {record_id}")
+        elif args.command == "music-video-local":
+            permissions.require("files")
+            project = LocalMusicVideoRenderer(config.resolved_data_dir / "media" / "music_video").render(
+                Path(args.audio),
+                args.prompt,
+                style=args.style,
+                consent=args.consent,
+            )
+            record_id = agent.memory.add(
+                Record(
+                    category="video",
+                    subcategory="local_music_video",
+                    kind="generated_media",
+                    title=f"Local music video: {Path(args.audio).name}",
+                    content=project.manifest_path.read_text(encoding="utf-8"),
+                    source=str(project.manifest_path),
+                    media_path=str(project.output_path),
+                    status="review",
+                )
+            )
+            print(f"Rendered local music video: {project.output_path}")
+            print(f"Manifest: {project.manifest_path}")
+            print(f"Stored render as {record_id}")
         elif args.command == "wake":
             result = WakeAssistant(config, agent.memory).respond(
                 args.transcript, capture_photo=args.capture_photo

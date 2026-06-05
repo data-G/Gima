@@ -398,6 +398,14 @@ class LipSyncProject:
     safety_path: Path
 
 
+@dataclass
+class MusicVideoProject:
+    project_dir: Path
+    output_path: Path
+    manifest_path: Path
+    prompt_path: Path
+
+
 class LipSyncPlanner:
     def __init__(self, output_dir: Path):
         self.output_dir = output_dir
@@ -481,6 +489,83 @@ class LipSyncPlanner:
             return json.loads(result.stdout or "{}")
         except Exception as error:
             return {"path": str(path), "error": str(error)}
+
+
+class LocalMusicVideoRenderer:
+    AUDIO_SUFFIXES = {".mp3", ".wav", ".m4a", ".flac", ".aac", ".ogg"}
+    STYLES = {
+        "waveform": "showwaves=s=1280x720:mode=line:colors=cyan,format=yuv420p",
+        "spectrum": "showspectrum=s=1280x720:mode=combined:color=intensity:slide=scroll,format=yuv420p",
+    }
+
+    def __init__(self, output_dir: Path):
+        self.output_dir = output_dir
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+
+    def render(
+        self,
+        audio: Path,
+        prompt: str,
+        style: str = "waveform",
+        consent: bool = False,
+    ) -> MusicVideoProject:
+        if not consent:
+            raise PermissionError("Local music video rendering requires --consent for the audio rights")
+        if not shutil.which("ffmpeg"):
+            raise RuntimeError("Local music video rendering requires ffmpeg")
+        audio_path = audio.expanduser().resolve()
+        if not audio_path.exists():
+            raise FileNotFoundError(f"Audio file does not exist: {audio_path}")
+        if audio_path.suffix.casefold() not in self.AUDIO_SUFFIXES:
+            raise ValueError("Audio must be an MP3 or another supported audio file")
+        if style not in self.STYLES:
+            raise ValueError(f"Unknown local music video style: {style}")
+
+        project_dir = self.output_dir / f"music_video_{uuid.uuid4().hex[:12]}"
+        project_dir.mkdir(parents=True, exist_ok=True)
+        output_path = project_dir / "output_music_video.mp4"
+        manifest_path = project_dir / "manifest.json"
+        prompt_path = project_dir / "prompt.txt"
+        prompt_path.write_text(prompt.strip() + "\n", encoding="utf-8")
+        command = [
+            "ffmpeg",
+            "-hide_banner",
+            "-y",
+            "-i",
+            str(audio_path),
+            "-filter_complex",
+            f"[0:a]{self.STYLES[style]}[v]",
+            "-map",
+            "[v]",
+            "-map",
+            "0:a",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+            "-c:a",
+            "aac",
+            "-shortest",
+            str(output_path),
+        ]
+        subprocess.run(command, check=True, capture_output=True, text=True, timeout=900)
+        manifest = {
+            "kind": "local_music_video",
+            "audio": str(audio_path),
+            "prompt": prompt,
+            "style": style,
+            "renderer": "ffmpeg",
+            "output": str(output_path),
+            "status": "rendered",
+            "audio_metadata": LipSyncPlanner(project_dir)._media_metadata(audio_path),
+            "output_metadata": LipSyncPlanner(project_dir)._media_metadata(output_path),
+            "safety": [
+                "Use only audio you own or have permission to use.",
+                "Label generated media as AI-assisted or locally rendered when shared.",
+            ],
+        }
+        manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        return MusicVideoProject(project_dir, output_path, manifest_path, prompt_path)
 
 
 def monitor_camera(
