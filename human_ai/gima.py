@@ -25,6 +25,7 @@ from .self_update import SelfUpdateManager
 from .services import LocalMusicVideoRenderer, VideoQualityEvaluator, dependency_report
 from .world_checklist import build_world_checklist, format_world_checklist
 from .vibe_code import VibeCodingAgent
+from .web_ui import run_web_ui
 
 
 DEFAULT_CONFIG = "config.local.json"
@@ -46,6 +47,11 @@ def parser() -> argparse.ArgumentParser:
     commands.add_parser("start", help="Start Gima's local brain")
     commands.add_parser("stop", help="Stop Gima's local brain")
     commands.add_parser("status", help="Show brain, memory, and tool status")
+
+    web = commands.add_parser("web", help="Run Gima's local dark web chat interface")
+    web.add_argument("--host", default="127.0.0.1", help="Bind host. Keep 127.0.0.1 for local-only use.")
+    web.add_argument("--port", type=int, default=8787, help="Port for the local web interface")
+    web.add_argument("--open", action="store_true", help="Open the interface in the default browser")
 
     talk = commands.add_parser("talk", help="Talk to Gima in the terminal")
     talk.add_argument("message", nargs="*", help="Typed message. Omit for interactive chat.")
@@ -537,6 +543,8 @@ def main(argv=None) -> int:
             print("Gima brain stopped.")
         elif args.command == "status":
             _print_status(agent, brain, args.config)
+        elif args.command == "web":
+            run_web_ui(config, agent, brain, args.host, args.port, args.open)
         elif args.command == "doctor":
             print(json.dumps(dependency_report(), indent=2))
         elif args.command == "model-levels":
