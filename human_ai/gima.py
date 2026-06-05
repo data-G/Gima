@@ -13,6 +13,7 @@ from .agent import Agent
 from .assistant_loop import LocalAssistant
 from .brain import BrainServer
 from .config import load_config
+from .dream import DreamIdea, DreamStore
 from .memory import Record
 from .permissions import PermissionManager
 from .secrets import SECRET_ENV_KEYS, configure_teacher_secrets, load_secret_env, secrets_env_path
@@ -105,6 +106,19 @@ def parser() -> argparse.ArgumentParser:
 
     commands.add_parser("ai-list", help="List AI providers Gima can use")
     commands.add_parser("world-checklist", help="Show Gima's path toward frontier AI quality")
+
+    commands.add_parser("dream-init", help="Create Gima's Dream brain folder and CSV files")
+
+    dream_add = commands.add_parser("dream-add", help="Add a possible-but-unproven Dream theory")
+    dream_add.add_argument("title")
+    dream_add.add_argument("theory", nargs="+")
+    dream_add.add_argument("--why-new", default="")
+    dream_add.add_argument("--path", default="", help="Possible path to test the theory")
+    dream_add.add_argument("--evidence", default="", help="Evidence needed before trusting it")
+    dream_add.add_argument("--risk", default="medium", choices=["low", "medium", "high"])
+
+    dream_list = commands.add_parser("dream-list", help="List recent Dream theories")
+    dream_list.add_argument("--limit", type=int, default=20)
 
     daily_learn = commands.add_parser("daily-learn", help="Learn from available AI providers for a bounded time")
     daily_learn.add_argument("--minutes", type=float, default=60)
@@ -321,6 +335,21 @@ def _print_ai_providers(agent: Agent) -> None:
     print(f"Teacher secrets file: {secrets_env_path(agent.config.resolved_workspace)}")
 
 
+def _print_dream_ideas(rows) -> None:
+    if not rows:
+        print("No Dream ideas yet.")
+        return
+    for row in rows:
+        print(f"[{row['id']}] {row['status']} / {row['parent_status']} / risk={row['risk_level']}")
+        print(row["title"])
+        print(row["theory"][:700].replace("\n", " "))
+        if row.get("possible_path"):
+            print(f"path: {row['possible_path']}")
+        if row.get("evidence_needed"):
+            print(f"evidence: {row['evidence_needed']}")
+        print()
+
+
 def _teacher_setup_providers(values: list[str] | None) -> list[str]:
     if not values or "all" in values:
         return ["openai", "gemini"]
@@ -400,6 +429,7 @@ def main(argv=None) -> int:
     load_secret_env(config.resolved_workspace)
     agent = Agent(config)
     brain = BrainServer(config, agent.memory)
+    dreams = DreamStore(config.resolved_data_dir)
     permissions = PermissionManager(config, agent.memory)
     self_updates = SelfUpdateManager(config.resolved_workspace, config.resolved_data_dir)
     try:
@@ -491,6 +521,26 @@ def main(argv=None) -> int:
             _print_ai_providers(agent)
         elif args.command == "world-checklist":
             print(format_world_checklist(build_world_checklist(agent, brain)))
+        elif args.command == "dream-init":
+            dreams.initialize()
+            print(f"Dream folder ready: {dreams.root}")
+            print(f"Ideas CSV: {dreams.ideas_path}")
+            print(f"Daily questions CSV: {dreams.questions_path}")
+        elif args.command == "dream-add":
+            idea_id = dreams.add_idea(
+                DreamIdea(
+                    title=args.title,
+                    theory=" ".join(args.theory),
+                    why_it_might_be_new=args.why_new,
+                    possible_path=args.path,
+                    evidence_needed=args.evidence,
+                    risk_level=args.risk,
+                )
+            )
+            print(f"Dream idea saved as {idea_id}")
+            print(f"Dream folder: {dreams.root}")
+        elif args.command == "dream-list":
+            _print_dream_ideas(dreams.list_ideas(args.limit))
         elif args.command == "daily-learn":
             if not args.scheduled:
                 permissions.require("web")

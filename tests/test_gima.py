@@ -232,6 +232,38 @@ class GimaControlCenterTests(unittest.TestCase):
         self.assertIn("World Rank", output)
         self.assertIn("early local assistant", output)
 
+    def test_dream_init_creates_brain_folder(self):
+        output = self.run_gima("dream-init")
+        dream_dir = Path(self.temp.name) / ".human-ai" / "brain" / "Dream"
+
+        self.assertIn("Dream folder ready", output)
+        self.assertTrue((dream_dir / "README.md").exists())
+        self.assertTrue((dream_dir / "ideas.csv").exists())
+        self.assertTrue((dream_dir / "experiments.csv").exists())
+        self.assertTrue((dream_dir / "sources.csv").exists())
+        self.assertTrue((dream_dir / "reviews.csv").exists())
+        self.assertTrue((dream_dir / "daily_questions.csv").exists())
+
+    def test_dream_add_and_list(self):
+        saved = self.run_gima(
+            "dream-add",
+            "Intent memory compass",
+            "A local assistant can route future work by storing user intent patterns as reviewed theories.",
+            "--why-new",
+            "Combines local memory, approval, and voice correction into one learning loop.",
+            "--path",
+            "Create small experiments from conversation logs.",
+            "--evidence",
+            "Repeated tasks should route faster with fewer corrections.",
+            "--risk",
+            "low",
+        )
+        listed = self.run_gima("dream-list")
+
+        self.assertIn("Dream idea saved", saved)
+        self.assertIn("Intent memory compass", listed)
+        self.assertIn("risk=low", listed)
+
     def test_daily_learn_uses_selected_provider(self):
         with patch("human_ai.agent.Agent.daily_teacher_learning") as daily:
             daily.return_value = [("chatgpt", "memory", "lesson")]
