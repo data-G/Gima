@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import csv
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Iterable, List
 
 from .agent import Agent
@@ -23,6 +25,8 @@ def build_world_checklist(agent: Agent, brain: BrainServer) -> List[ChecklistIte
     providers = agent.list_ai_providers()
     active_heart = agent.heart.list_policies("active")
     pending_reviews = agent.memory.list_source_reviews("pending", 500)
+    eval_cases = _count_csv_rows(agent.config.resolved_data_dir / "evals" / "cases.csv")
+    eval_results = _count_csv_rows(agent.config.resolved_data_dir / "evals" / "results.csv")
 
     missing_tools = [name for name, ok in deps.items() if not ok]
     ready_providers = [row["provider"] for row in providers if row["available"] == "yes"]
@@ -85,8 +89,11 @@ def build_world_checklist(agent: Agent, brain: BrainServer) -> List[ChecklistIte
         ChecklistItem(
             "Evaluation",
             "Measure Gima with repeatable tests, benchmarks, user ratings, and regression checks.",
-            "needs work",
-            "Create an eval set for conversation, coding, web learning, voice, vision, and tool safety.",
+            "started" if eval_cases and eval_results else ("needs run" if eval_cases else "needs work"),
+            (
+                f"Run `python3 -m human_ai.gima eval-run`; current eval cases: {eval_cases}, "
+                f"saved results: {eval_results}. Expand toward coding, web, voice, vision, and tool safety."
+            ),
         ),
         ChecklistItem(
             "Autonomy",
@@ -119,6 +126,13 @@ def build_world_checklist(agent: Agent, brain: BrainServer) -> List[ChecklistIte
             f"Current realistic rank: personal local prototype. Pending source reviews: {len(pending_reviews)}.",
         ),
     ]
+
+
+def _count_csv_rows(path: Path) -> int:
+    if not path.exists():
+        return 0
+    with path.open(newline="", encoding="utf-8") as handle:
+        return sum(1 for _ in csv.DictReader(handle))
 
 
 def format_world_checklist(items: Iterable[ChecklistItem]) -> str:

@@ -14,6 +14,7 @@ from .assistant_loop import LocalAssistant
 from .brain import BrainServer
 from .config import load_config
 from .dream import DreamIdea, DreamStore
+from .evals import EvalStore
 from .memory import Record
 from .permissions import PermissionManager
 from .secrets import SECRET_ENV_KEYS, configure_teacher_secrets, load_secret_env, secrets_env_path
@@ -119,6 +120,15 @@ def parser() -> argparse.ArgumentParser:
 
     dream_list = commands.add_parser("dream-list", help="List recent Dream theories")
     dream_list.add_argument("--limit", type=int, default=20)
+
+    commands.add_parser("eval-init", help="Create Gima's repeatable evaluation CSV files")
+
+    eval_run = commands.add_parser("eval-run", help="Run Gima's repeatable evaluation set")
+    eval_run.add_argument("--limit", type=int, default=None)
+    eval_run.add_argument("--model", action="store_true", help="Include slower local model chat responses")
+
+    eval_results = commands.add_parser("eval-results", help="Show recent Gima evaluation results")
+    eval_results.add_argument("--limit", type=int, default=20)
 
     daily_learn = commands.add_parser("daily-learn", help="Learn from available AI providers for a bounded time")
     daily_learn.add_argument("--minutes", type=float, default=60)
@@ -350,6 +360,21 @@ def _print_dream_ideas(rows) -> None:
         print()
 
 
+def _print_eval_results(rows) -> None:
+    if not rows:
+        print("No eval results yet.")
+        return
+    for row in rows:
+        marker = "PASS" if row["passed"] == "yes" else "FAIL"
+        print(f"[{marker}] {row['category']} / {row['mode']} / {row['actual_action']}")
+        print(f"prompt: {row['prompt']}")
+        print(f"expected text: {row['expected_contains'] or '[none]'}")
+        if row.get("expected_action"):
+            print(f"expected action: {row['expected_action']}")
+        print(f"actual: {row['actual'][:500].replace(chr(10), ' ')}")
+        print()
+
+
 def _teacher_setup_providers(values: list[str] | None) -> list[str]:
     if not values or "all" in values:
         return ["openai", "gemini"]
@@ -430,6 +455,7 @@ def main(argv=None) -> int:
     agent = Agent(config)
     brain = BrainServer(config, agent.memory)
     dreams = DreamStore(config.resolved_data_dir)
+    evals = EvalStore(config.resolved_data_dir)
     permissions = PermissionManager(config, agent.memory)
     self_updates = SelfUpdateManager(config.resolved_workspace, config.resolved_data_dir)
     try:
@@ -541,6 +567,19 @@ def main(argv=None) -> int:
             print(f"Dream folder: {dreams.root}")
         elif args.command == "dream-list":
             _print_dream_ideas(dreams.list_ideas(args.limit))
+        elif args.command == "eval-init":
+            evals.initialize()
+            print(f"Eval folder ready: {evals.root}")
+            print(f"Cases CSV: {evals.cases_path}")
+            print(f"Results CSV: {evals.results_path}")
+        elif args.command == "eval-run":
+            summary = evals.run(agent, args.limit, use_model=args.model)
+            print(f"Eval run: {summary.run_id}")
+            print(f"Cases: {summary.passed_cases}/{summary.total_cases} passed")
+            print(f"Score: {summary.score:.2f}/{summary.max_score:.2f} ({summary.percent:.2f}%)")
+            print(f"Results CSV: {summary.results_path}")
+        elif args.command == "eval-results":
+            _print_eval_results(evals.latest_results(args.limit))
         elif args.command == "daily-learn":
             if not args.scheduled:
                 permissions.require("web")

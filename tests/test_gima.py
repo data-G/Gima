@@ -264,6 +264,29 @@ class GimaControlCenterTests(unittest.TestCase):
         self.assertIn("Intent memory compass", listed)
         self.assertIn("risk=low", listed)
 
+    def test_eval_init_run_and_results(self):
+        init = self.run_gima("eval-init")
+        self.assertIn("Eval folder ready", init)
+
+        run = self.run_gima("eval-run")
+        self.assertIn("Eval run:", run)
+        self.assertIn("Cases:", run)
+        self.assertIn("Score:", run)
+
+        results = self.run_gima("eval-results", "--limit", "2")
+        self.assertIn("PASS", results)
+        eval_dir = Path(self.temp.name) / ".human-ai" / "evals"
+        self.assertTrue((eval_dir / "cases.csv").exists())
+        self.assertTrue((eval_dir / "results.csv").exists())
+
+    def test_world_checklist_reflects_eval_progress(self):
+        self.run_gima("eval-run")
+        with patch("human_ai.gima.BrainServer.status") as status:
+            status.return_value = {"running": False, "pid": None, "models": None}
+            output = self.run_gima("world-checklist")
+        self.assertIn("[started] Evaluation", output)
+        self.assertIn("current eval cases: 5", output)
+
     def test_daily_learn_uses_selected_provider(self):
         with patch("human_ai.agent.Agent.daily_teacher_learning") as daily:
             daily.return_value = [("chatgpt", "memory", "lesson")]
