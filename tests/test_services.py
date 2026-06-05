@@ -7,6 +7,7 @@ from human_ai.config import Config
 from human_ai.memory import MemoryStore
 from human_ai.services import (
     LipSyncPlanner,
+    LocalMusicVideoDirector,
     LocalMusicVideoRenderer,
     SafeToolRunner,
     TeacherModelClient,
@@ -134,6 +135,29 @@ class ServiceSafetyTests(unittest.TestCase):
             self.assertIn("local_music_video", text)
             self.assertIn("make a waveform music video", text)
             self.assertIn(str(audio.resolve()), text)
+
+    def test_local_music_video_director_creates_freebeat_style_storyboard(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            audio = root / "song.wav"
+            audio.write_bytes(b"fake wav")
+            fake_metadata = {"format": {"duration": "24.0"}}
+            with patch("human_ai.services.LipSyncPlanner._media_metadata", return_value=fake_metadata):
+                project = LocalMusicVideoDirector(root / "out").plan(
+                    audio,
+                    "neon city dance story",
+                    mode="lyrics",
+                    style="anime",
+                    aspect="9:16",
+                    lyrics="line one\nline two",
+                )
+
+            self.assertTrue(project.storyboard_path.exists())
+            self.assertTrue(project.manifest_path.exists())
+            text = project.manifest_path.read_text(encoding="utf-8")
+            self.assertIn("freebeat_style_local_music_video_director", text)
+            self.assertIn("neon city dance story", text)
+            self.assertIn("9:16", text)
 
     def test_video_quality_evaluator_scores_manifest_and_streams(self):
         with tempfile.TemporaryDirectory() as temp:

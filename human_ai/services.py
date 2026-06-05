@@ -409,6 +409,13 @@ class MusicVideoProject:
 
 
 @dataclass
+class MusicVideoDirectorPlan:
+    project_dir: Path
+    storyboard_path: Path
+    manifest_path: Path
+
+
+@dataclass
 class SongSketchProject:
     project_dir: Path
     output_path: Path
@@ -583,6 +590,147 @@ class LocalMusicVideoRenderer:
         }
         manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
         return MusicVideoProject(project_dir, output_path, manifest_path, prompt_path)
+
+
+class LocalMusicVideoDirector:
+    """Freebeat-style local planning layer for music-first video workflows."""
+
+    MODES = {"story", "stage", "lyrics", "visualizer"}
+    ASPECTS = {"16:9", "9:16", "1:1"}
+
+    def __init__(self, output_dir: Path):
+        self.output_dir = output_dir
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+
+    def plan(
+        self,
+        audio: Path,
+        prompt: str,
+        mode: str = "story",
+        style: str = "cinematic",
+        aspect: str = "16:9",
+        lyrics: str = "",
+    ) -> MusicVideoDirectorPlan:
+        audio_path = audio.expanduser().resolve()
+        if not audio_path.exists():
+            raise FileNotFoundError(f"Audio file does not exist: {audio_path}")
+        mode = mode.casefold().strip() or "story"
+        if mode not in self.MODES:
+            raise ValueError(f"Mode must be one of: {', '.join(sorted(self.MODES))}")
+        if aspect not in self.ASPECTS:
+            raise ValueError(f"Aspect must be one of: {', '.join(sorted(self.ASPECTS))}")
+        prompt = " ".join(prompt.strip().split())
+        if not prompt:
+            raise ValueError("Creative prompt is required")
+        project_dir = self.output_dir / f"music_video_director_{uuid.uuid4().hex[:12]}"
+        project_dir.mkdir(parents=True, exist_ok=True)
+        metadata = LipSyncPlanner(project_dir)._media_metadata(audio_path)
+        duration = self._duration(metadata)
+        scenes = self._scenes(duration, prompt, mode, style, lyrics)
+        storyboard_path = project_dir / "storyboard.md"
+        manifest_path = project_dir / "manifest.json"
+        storyboard_path.write_text(
+            self._storyboard_text(audio_path, prompt, mode, style, aspect, scenes),
+            encoding="utf-8",
+        )
+        manifest = {
+            "kind": "freebeat_style_local_music_video_director",
+            "audio": str(audio_path),
+            "prompt": prompt,
+            "mode": mode,
+            "style": style,
+            "aspect": aspect,
+            "duration_seconds": duration,
+            "lyrics": lyrics,
+            "storyboard": str(storyboard_path),
+            "scenes": scenes,
+            "renderer_next_step": "Use music-video-local for waveform/spectrum render, or connect an approved local video model.",
+            "limits": [
+                "This is a local director/storyboard planner, not Freebeat.ai and not a full generative video backend.",
+                "Use only songs, lyrics, images, and faces you own or have permission to use.",
+            ],
+        }
+        manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        return MusicVideoDirectorPlan(project_dir, storyboard_path, manifest_path)
+
+    def _duration(self, metadata: Dict[str, object]) -> float:
+        try:
+            return max(8.0, float((metadata.get("format") or {}).get("duration") or 30.0))
+        except (TypeError, ValueError):
+            return 30.0
+
+    def _scenes(self, duration: float, prompt: str, mode: str, style: str, lyrics: str) -> List[Dict[str, object]]:
+        scene_count = max(3, min(12, math.ceil(duration / 8)))
+        scene_length = duration / scene_count
+        lyric_lines = [line.strip() for line in lyrics.splitlines() if line.strip()]
+        scenes: List[Dict[str, object]] = []
+        for index in range(scene_count):
+            start = round(index * scene_length, 2)
+            end = round(duration if index == scene_count - 1 else (index + 1) * scene_length, 2)
+            energy = "intro" if index == 0 else "peak" if index == scene_count - 1 else "build"
+            if mode == "stage":
+                shot = "performer close-up, stage lights, crowd energy"
+            elif mode == "lyrics":
+                shot = "dynamic lyric caption focus with animated background"
+            elif mode == "visualizer":
+                shot = "audio-reactive shapes, waveform motion, beat-synced color"
+            else:
+                shot = "story scene with A-roll emotion and B-roll atmosphere"
+            scenes.append(
+                {
+                    "index": index + 1,
+                    "start": start,
+                    "end": end,
+                    "energy": energy,
+                    "direction": f"{style} {shot}",
+                    "prompt": f"{prompt}. Scene {index + 1}: {energy} section, {shot}.",
+                    "lyric_hint": lyric_lines[index % len(lyric_lines)] if lyric_lines else "",
+                }
+            )
+        return scenes
+
+    def _storyboard_text(
+        self,
+        audio_path: Path,
+        prompt: str,
+        mode: str,
+        style: str,
+        aspect: str,
+        scenes: List[Dict[str, object]],
+    ) -> str:
+        lines = [
+            "# Local Music Video Director Plan",
+            "",
+            f"Audio: {audio_path}",
+            f"Mode: {mode}",
+            f"Style: {style}",
+            f"Aspect: {aspect}",
+            f"Creative prompt: {prompt}",
+            "",
+            "## Scenes",
+        ]
+        for scene in scenes:
+            lines.extend(
+                [
+                    "",
+                    f"### Scene {scene['index']} ({scene['start']}s-{scene['end']}s)",
+                    f"- Energy: {scene['energy']}",
+                    f"- Direction: {scene['direction']}",
+                    f"- Prompt: {scene['prompt']}",
+                    f"- Lyric hint: {scene['lyric_hint'] or '[none]'}",
+                ]
+            )
+        lines.extend(
+            [
+                "",
+                "## Next Local Steps",
+                "",
+                "1. Render a waveform/spectrum draft with `music-video-local`.",
+                "2. Add lyric timing or scene images when available.",
+                "3. Evaluate the MP4 with `video-eval-local`.",
+            ]
+        )
+        return "\n".join(lines) + "\n"
 
 
 class LocalSongSketcher:

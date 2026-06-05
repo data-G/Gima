@@ -47,6 +47,7 @@ class WebUiTests(unittest.TestCase):
         self.assertIn("Attach Files", INDEX_HTML)
         self.assertIn("Generate Song Sketch", INDEX_HTML)
         self.assertIn("Generate Video From Audio", INDEX_HTML)
+        self.assertIn("Freebeat-Style Director", INDEX_HTML)
         self.assertIn("Coding Split", INDEX_HTML)
 
     def test_web_api_status_chat_and_memory_search(self):
@@ -139,6 +140,35 @@ class WebUiTests(unittest.TestCase):
                         {"audio_path": str(project_dir / "song.wav"), "prompt": "waveform", "style": "waveform", "consent": True},
                     )
                 self.assertEqual(video["output"], str(output_path))
+
+                director_manifest = project_dir / "director_manifest.json"
+                director_storyboard = project_dir / "storyboard.md"
+                director_manifest.write_text("{}", encoding="utf-8")
+                director_storyboard.write_text("# storyboard", encoding="utf-8")
+                with patch("human_ai.web_ui.LocalMusicVideoDirector.plan") as director:
+                    director.return_value = type(
+                        "DirectorProject",
+                        (),
+                        {
+                            "manifest_path": director_manifest,
+                            "storyboard_path": director_storyboard,
+                        },
+                    )()
+                    director_response = self._request(
+                        host,
+                        port,
+                        "POST",
+                        "/api/media/music-video-director",
+                        {
+                            "audio_path": str(project_dir / "song.wav"),
+                            "prompt": "freebeat style music video",
+                            "mode": "story",
+                            "style": "cinematic",
+                            "aspect": "16:9",
+                            "lyrics": "",
+                        },
+                    )
+                self.assertEqual(director_response["storyboard"], str(director_storyboard))
 
                 update = SelfUpdateRequest(
                     "update_test",

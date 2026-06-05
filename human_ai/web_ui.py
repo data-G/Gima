@@ -17,7 +17,7 @@ from .agent import Agent
 from .brain import BrainServer
 from .config import Config
 from .memory import Record
-from .services import LocalMusicVideoRenderer, LocalSongSketcher
+from .services import LocalMusicVideoDirector, LocalMusicVideoRenderer, LocalSongSketcher
 from .vibe_code import VibeCodingAgent
 
 
@@ -367,6 +367,26 @@ INDEX_HTML = """<!doctype html>
         <div class="tool-output" id="videoOutput"></div>
       </div>
       <div class="card">
+        <h2 style="font-size: 14px;">Freebeat-Style Director</h2>
+        <input class="tool-input" id="directorAudioPath" placeholder="Audio path or uploaded file path">
+        <textarea class="tool-textarea" id="directorPrompt" placeholder="Music video idea, e.g. neon city dance story"></textarea>
+        <input class="tool-input" id="directorStyle" value="cinematic" placeholder="Style">
+        <select class="tool-select" id="directorMode">
+          <option value="story">Story</option>
+          <option value="stage">Stage</option>
+          <option value="lyrics">Lyrics</option>
+          <option value="visualizer">Visualizer</option>
+        </select>
+        <select class="tool-select" id="directorAspect">
+          <option value="16:9">16:9</option>
+          <option value="9:16">9:16</option>
+          <option value="1:1">1:1</option>
+        </select>
+        <textarea class="tool-textarea" id="directorLyrics" placeholder="Optional lyrics, one line at a time"></textarea>
+        <button class="tool-button" id="directorBtn">Create Director Plan</button>
+        <div class="tool-output" id="directorOutput"></div>
+      </div>
+      <div class="card">
         <h2 style="font-size: 14px;">Coding Split</h2>
         <textarea class="tool-textarea" id="codeFeature" placeholder="Feature to plan offline, e.g. add file preview"></textarea>
         <button class="tool-button" id="codeBtn">Create Vibe Code Plan</button>
@@ -504,6 +524,21 @@ INDEX_HTML = """<!doctype html>
         document.getElementById('videoBtn').disabled = false;
       }
     });
+    document.getElementById('directorBtn').addEventListener('click', async () => {
+      const audio_path = document.getElementById('directorAudioPath').value.trim();
+      const prompt = document.getElementById('directorPrompt').value.trim();
+      const mode = document.getElementById('directorMode').value;
+      const style = document.getElementById('directorStyle').value.trim() || 'cinematic';
+      const aspect = document.getElementById('directorAspect').value;
+      const lyrics = document.getElementById('directorLyrics').value;
+      if (!audio_path || !prompt) return;
+      document.getElementById('directorBtn').disabled = true;
+      try {
+        setOutput('directorOutput', await apiPost('/api/media/music-video-director', { audio_path, prompt, mode, style, aspect, lyrics }));
+      } finally {
+        document.getElementById('directorBtn').disabled = false;
+      }
+    });
     document.getElementById('codeBtn').addEventListener('click', async () => {
       const feature = document.getElementById('codeFeature').value.trim();
       if (!feature) return;
@@ -596,6 +631,9 @@ def _handler_factory(config: Config, agent: Agent, brain: BrainServer) -> type[B
                 return
             if parsed.path == "/api/media/music-video-local":
                 self._handle_music_video_local()
+                return
+            if parsed.path == "/api/media/music-video-director":
+                self._handle_music_video_director()
                 return
             if parsed.path == "/api/code/vibe-plan":
                 self._handle_vibe_plan()
@@ -693,6 +731,38 @@ def _handler_factory(config: Config, agent: Agent, brain: BrainServer) -> type[B
                     )
                 )
                 self._send_json(_project_payload(project.output_path, project.manifest_path, record_id))
+            except Exception as error:
+                self._send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+
+        def _handle_music_video_director(self) -> None:
+            try:
+                payload = self._read_json()
+                project = LocalMusicVideoDirector(config.resolved_data_dir / "media" / "music_video_director").plan(
+                    Path(str(payload.get("audio_path", ""))),
+                    str(payload.get("prompt", "")),
+                    mode=str(payload.get("mode", "story")),
+                    style=str(payload.get("style", "cinematic")),
+                    aspect=str(payload.get("aspect", "16:9")),
+                    lyrics=str(payload.get("lyrics", "")),
+                )
+                record_id = agent.memory.add(
+                    Record(
+                        category="video",
+                        subcategory="music_video_director",
+                        kind="generation_plan",
+                        title=f"Music video director: {Path(str(payload.get('audio_path', 'audio'))).name}",
+                        content=project.manifest_path.read_text(encoding="utf-8"),
+                        source=str(project.manifest_path),
+                        status="review",
+                    )
+                )
+                self._send_json(
+                    {
+                        "storyboard": str(project.storyboard_path),
+                        "manifest": str(project.manifest_path),
+                        "record_id": record_id,
+                    }
+                )
             except Exception as error:
                 self._send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
 
