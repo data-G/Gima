@@ -47,6 +47,7 @@ class WebUiTests(unittest.TestCase):
         self.assertIn("Attach Files", INDEX_HTML)
         self.assertIn("Generate Song Sketch", INDEX_HTML)
         self.assertIn("Generate Video From Audio", INDEX_HTML)
+        self.assertIn("Images + MP3 Video", INDEX_HTML)
         self.assertIn("Freebeat-Style Director", INDEX_HTML)
         self.assertIn("Coding Split", INDEX_HTML)
 
@@ -96,17 +97,29 @@ class WebUiTests(unittest.TestCase):
                 web.stop()
 
     def test_web_api_generates_local_song_sketch(self):
+        from human_ai.services import SongSketchProject
+
         with patch.object(BrainServer, "status", return_value={"running": False, "pid": None, "models": None}):
             web = serve_in_thread(self.config, self.agent, self.brain)
             try:
                 host, port = web.server.server_address
-                song = self._request(
-                    host,
-                    port,
-                    "POST",
-                    "/api/media/song-local",
-                    {"prompt": "happy Gima intro", "duration_seconds": 4},
-                )
+                project_dir = Path(self.temp.name) / "song_project"
+                project_dir.mkdir()
+                output_path = project_dir / "song.wav"
+                output_path.write_bytes(b"wav")
+                manifest_path = project_dir / "manifest.json"
+                manifest_path.write_text("{}", encoding="utf-8")
+                prompt_path = project_dir / "prompt.txt"
+                prompt_path.write_text("prompt", encoding="utf-8")
+                with patch("human_ai.web_ui.LocalSongSketcher.render") as render:
+                    render.return_value = SongSketchProject(project_dir, output_path, manifest_path, prompt_path)
+                    song = self._request(
+                        host,
+                        port,
+                        "POST",
+                        "/api/media/song-local",
+                        {"prompt": "happy Gima intro", "duration_seconds": 4},
+                    )
                 self.assertTrue(Path(song["output"]).exists())
                 self.assertTrue(song["output"].endswith(".wav"))
                 self.assertTrue(Path(song["manifest"]).exists())
@@ -140,6 +153,30 @@ class WebUiTests(unittest.TestCase):
                         {"audio_path": str(project_dir / "song.wav"), "prompt": "waveform", "style": "waveform", "consent": True},
                     )
                 self.assertEqual(video["output"], str(output_path))
+
+                with patch("human_ai.web_ui.LocalImageMusicVideoRenderer.render") as render_images:
+                    render_images.return_value = type(
+                        "ImageVideoProject",
+                        (),
+                        {
+                            "output_path": output_path,
+                            "manifest_path": manifest_path,
+                        },
+                    )()
+                    image_video = self._request(
+                        host,
+                        port,
+                        "POST",
+                        "/api/media/image-music-video-local",
+                        {
+                            "audio_path": str(project_dir / "song.wav"),
+                            "image_paths": [str(project_dir / "image.jpg")],
+                            "prompt": "image mp3 video",
+                            "aspect": "16:9",
+                            "consent": True,
+                        },
+                    )
+                self.assertEqual(image_video["output"], str(output_path))
 
                 director_manifest = project_dir / "director_manifest.json"
                 director_storyboard = project_dir / "storyboard.md"

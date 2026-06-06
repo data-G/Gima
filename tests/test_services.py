@@ -7,6 +7,7 @@ from human_ai.config import Config
 from human_ai.memory import MemoryStore
 from human_ai.services import (
     LipSyncPlanner,
+    LocalImageMusicVideoRenderer,
     LocalMusicVideoDirector,
     LocalMusicVideoRenderer,
     SafeToolRunner,
@@ -135,6 +136,38 @@ class ServiceSafetyTests(unittest.TestCase):
             self.assertIn("local_music_video", text)
             self.assertIn("make a waveform music video", text)
             self.assertIn(str(audio.resolve()), text)
+
+    def test_local_image_music_video_renderer_creates_slideshow_manifest(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            audio = root / "song.mp3"
+            image = root / "image.jpg"
+            audio.write_bytes(b"fake mp3")
+            image.write_bytes(b"fake jpg")
+
+            def fake_run(command, **kwargs):
+                output = Path(command[-1])
+                output.write_bytes(b"fake mp4")
+                return None
+
+            with patch("human_ai.services.shutil.which", return_value="/usr/bin/ffmpeg"), patch(
+                "human_ai.services.subprocess.run", side_effect=fake_run
+            ), patch("human_ai.services.LipSyncPlanner._media_metadata", return_value={"format": {"duration": "4.0"}}):
+                project = LocalImageMusicVideoRenderer(root / "out").render(
+                    audio,
+                    [image],
+                    "make an image music video",
+                    aspect="9:16",
+                    max_duration_seconds=4,
+                    consent=True,
+                )
+
+            self.assertTrue(project.output_path.exists())
+            text = project.manifest_path.read_text(encoding="utf-8")
+            self.assertIn("local_image_music_video", text)
+            self.assertIn("make an image music video", text)
+            self.assertIn("720x1280", text)
+            self.assertIn("render_duration_seconds", text)
 
     def test_local_music_video_director_creates_freebeat_style_storyboard(self):
         with tempfile.TemporaryDirectory() as temp:

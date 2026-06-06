@@ -17,7 +17,7 @@ from .agent import Agent
 from .brain import BrainServer
 from .config import Config
 from .memory import Record
-from .services import LocalMusicVideoDirector, LocalMusicVideoRenderer, LocalSongSketcher
+from .services import LocalImageMusicVideoRenderer, LocalMusicVideoDirector, LocalMusicVideoRenderer, LocalSongSketcher
 from .vibe_code import VibeCodingAgent
 
 
@@ -367,6 +367,20 @@ INDEX_HTML = """<!doctype html>
         <div class="tool-output" id="videoOutput"></div>
       </div>
       <div class="card">
+        <h2 style="font-size: 14px;">Images + MP3 Video</h2>
+        <input class="tool-input" id="imageVideoAudioPath" placeholder="MP3/audio path">
+        <textarea class="tool-textarea" id="imageVideoPaths" placeholder="Image paths, one per line or comma-separated"></textarea>
+        <textarea class="tool-textarea" id="imageVideoPrompt" placeholder="Describe this image music video"></textarea>
+        <input class="tool-input" id="imageVideoDuration" type="number" min="4" max="300" value="45">
+        <select class="tool-select" id="imageVideoAspect">
+          <option value="16:9">16:9</option>
+          <option value="9:16">9:16</option>
+          <option value="1:1">1:1</option>
+        </select>
+        <button class="tool-button" id="imageVideoBtn">Render Images + MP3 MP4</button>
+        <div class="tool-output" id="imageVideoOutput"></div>
+      </div>
+      <div class="card">
         <h2 style="font-size: 14px;">Freebeat-Style Director</h2>
         <input class="tool-input" id="directorAudioPath" placeholder="Audio path or uploaded file path">
         <textarea class="tool-textarea" id="directorPrompt" placeholder="Music video idea, e.g. neon city dance story"></textarea>
@@ -524,6 +538,21 @@ INDEX_HTML = """<!doctype html>
         document.getElementById('videoBtn').disabled = false;
       }
     });
+    document.getElementById('imageVideoBtn').addEventListener('click', async () => {
+      const audio_path = document.getElementById('imageVideoAudioPath').value.trim();
+      const rawImages = document.getElementById('imageVideoPaths').value;
+      const image_paths = rawImages.split(/[\n,]+/).map(value => value.trim()).filter(Boolean);
+      const prompt = document.getElementById('imageVideoPrompt').value.trim();
+      const aspect = document.getElementById('imageVideoAspect').value;
+      const max_duration_seconds = Number(document.getElementById('imageVideoDuration').value || 45);
+      if (!audio_path || !image_paths.length || !prompt) return;
+      document.getElementById('imageVideoBtn').disabled = true;
+      try {
+        setOutput('imageVideoOutput', await apiPost('/api/media/image-music-video-local', { audio_path, image_paths, prompt, aspect, max_duration_seconds, consent: true }));
+      } finally {
+        document.getElementById('imageVideoBtn').disabled = false;
+      }
+    });
     document.getElementById('directorBtn').addEventListener('click', async () => {
       const audio_path = document.getElementById('directorAudioPath').value.trim();
       const prompt = document.getElementById('directorPrompt').value.trim();
@@ -632,6 +661,9 @@ def _handler_factory(config: Config, agent: Agent, brain: BrainServer) -> type[B
             if parsed.path == "/api/media/music-video-local":
                 self._handle_music_video_local()
                 return
+            if parsed.path == "/api/media/image-music-video-local":
+                self._handle_image_music_video_local()
+                return
             if parsed.path == "/api/media/music-video-director":
                 self._handle_music_video_director()
                 return
@@ -724,6 +756,33 @@ def _handler_factory(config: Config, agent: Agent, brain: BrainServer) -> type[B
                         subcategory="local_music_video",
                         kind="generated_media",
                         title=f"Local music video: {Path(str(payload.get('audio_path', 'audio'))).name}",
+                        content=project.manifest_path.read_text(encoding="utf-8"),
+                        source=str(project.manifest_path),
+                        media_path=str(project.output_path),
+                        status="review",
+                    )
+                )
+                self._send_json(_project_payload(project.output_path, project.manifest_path, record_id))
+            except Exception as error:
+                self._send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+
+        def _handle_image_music_video_local(self) -> None:
+            try:
+                payload = self._read_json()
+                project = LocalImageMusicVideoRenderer(config.resolved_data_dir / "media" / "image_music_video").render(
+                    Path(str(payload.get("audio_path", ""))),
+                    [Path(str(path)) for path in payload.get("image_paths", [])],
+                    str(payload.get("prompt", "")),
+                    aspect=str(payload.get("aspect", "16:9")),
+                    max_duration_seconds=_safe_int(str(payload.get("max_duration_seconds", "45")), 45),
+                    consent=bool(payload.get("consent", False)),
+                )
+                record_id = agent.memory.add(
+                    Record(
+                        category="video",
+                        subcategory="image_music_video",
+                        kind="generated_media",
+                        title=f"Image music video: {Path(str(payload.get('audio_path', 'audio'))).name}",
                         content=project.manifest_path.read_text(encoding="utf-8"),
                         source=str(project.manifest_path),
                         media_path=str(project.output_path),

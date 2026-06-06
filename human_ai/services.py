@@ -14,6 +14,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+from array import array
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from pathlib import Path
@@ -409,6 +410,14 @@ class MusicVideoProject:
 
 
 @dataclass
+class ImageMusicVideoProject:
+    project_dir: Path
+    output_path: Path
+    manifest_path: Path
+    prompt_path: Path
+
+
+@dataclass
 class MusicVideoDirectorPlan:
     project_dir: Path
     storyboard_path: Path
@@ -590,6 +599,120 @@ class LocalMusicVideoRenderer:
         }
         manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
         return MusicVideoProject(project_dir, output_path, manifest_path, prompt_path)
+
+
+class LocalImageMusicVideoRenderer:
+    AUDIO_SUFFIXES = LocalMusicVideoRenderer.AUDIO_SUFFIXES
+    IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp"}
+
+    def __init__(self, output_dir: Path):
+        self.output_dir = output_dir
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+
+    def render(
+        self,
+        audio: Path,
+        images: List[Path],
+        prompt: str,
+        aspect: str = "16:9",
+        max_duration_seconds: int = 45,
+        consent: bool = False,
+    ) -> ImageMusicVideoProject:
+        if not consent:
+            raise PermissionError("Image music video rendering requires consent/rights for audio and images")
+        if not shutil.which("ffmpeg"):
+            raise RuntimeError("Image music video rendering requires ffmpeg")
+        audio_path = audio.expanduser().resolve()
+        if not audio_path.exists():
+            raise FileNotFoundError(f"Audio file does not exist: {audio_path}")
+        if audio_path.suffix.casefold() not in self.AUDIO_SUFFIXES:
+            raise ValueError("Audio must be an MP3 or another supported audio file")
+        image_paths = [image.expanduser().resolve() for image in images]
+        if not image_paths:
+            raise ValueError("At least one image is required")
+        for image_path in image_paths:
+            if not image_path.exists():
+                raise FileNotFoundError(f"Image file does not exist: {image_path}")
+            if image_path.suffix.casefold() not in self.IMAGE_SUFFIXES:
+                raise ValueError("Images must be jpg, jpeg, png, or webp files")
+        width, height = self._resolution(aspect)
+        audio_duration = self._duration(audio_path)
+        render_duration = min(audio_duration, max(4.0, float(max_duration_seconds)))
+        per_image = max(2.0, render_duration / len(image_paths))
+        project_dir = self.output_dir / f"image_music_video_{uuid.uuid4().hex[:12]}"
+        project_dir.mkdir(parents=True, exist_ok=True)
+        output_path = project_dir / "output_image_music_video.mp4"
+        manifest_path = project_dir / "manifest.json"
+        prompt_path = project_dir / "prompt.txt"
+        prompt_path.write_text(prompt.strip() + "\n", encoding="utf-8")
+
+        command = ["ffmpeg", "-hide_banner", "-y"]
+        for image_path in image_paths:
+            command.extend(["-loop", "1", "-t", f"{per_image:.3f}", "-i", str(image_path)])
+        command.extend(["-t", f"{render_duration:.3f}", "-i", str(audio_path)])
+        filters = []
+        for index in range(len(image_paths)):
+            filters.append(
+                f"[{index}:v]scale={width}:{height}:force_original_aspect_ratio=decrease,"
+                f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv420p[v{index}]"
+            )
+        concat_inputs = "".join(f"[v{index}]" for index in range(len(image_paths)))
+        filters.append(f"{concat_inputs}concat=n={len(image_paths)}:v=1:a=0[v]")
+        command.extend(
+            [
+                "-filter_complex",
+                ";".join(filters),
+                "-map",
+                "[v]",
+                "-map",
+                f"{len(image_paths)}:a",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "veryfast",
+                "-c:a",
+                "aac",
+                "-shortest",
+                str(output_path),
+            ]
+        )
+        subprocess.run(command, check=True, capture_output=True, text=True, timeout=900)
+        manifest = {
+            "kind": "local_image_music_video",
+            "audio": str(audio_path),
+            "images": [str(path) for path in image_paths],
+            "prompt": prompt,
+            "aspect": aspect,
+            "resolution": f"{width}x{height}",
+            "audio_duration_seconds": audio_duration,
+            "render_duration_seconds": render_duration,
+            "seconds_per_image": per_image,
+            "renderer": "ffmpeg",
+            "output": str(output_path),
+            "status": "rendered",
+            "audio_metadata": LipSyncPlanner(project_dir)._media_metadata(audio_path),
+            "output_metadata": LipSyncPlanner(project_dir)._media_metadata(output_path),
+            "safety": [
+                "Use only audio and images you own or have permission to use.",
+                "Label generated media as AI-assisted or locally rendered when shared.",
+            ],
+        }
+        manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        return ImageMusicVideoProject(project_dir, output_path, manifest_path, prompt_path)
+
+    def _duration(self, audio_path: Path) -> float:
+        metadata = LipSyncPlanner(self.output_dir)._media_metadata(audio_path)
+        try:
+            return max(2.0, float((metadata.get("format") or {}).get("duration") or 8.0))
+        except (TypeError, ValueError):
+            return 8.0
+
+    def _resolution(self, aspect: str) -> tuple[int, int]:
+        if aspect == "9:16":
+            return 720, 1280
+        if aspect == "1:1":
+            return 1080, 1080
+        return 1280, 720
 
 
 class LocalMusicVideoDirector:
@@ -796,7 +919,7 @@ class LocalSongSketcher:
             handle.setnchannels(1)
             handle.setsampwidth(2)
             handle.setframerate(sample_rate)
-            frames = bytearray()
+            frames = array("h")
             for sample in range(total_samples):
                 beat = int(sample / (sample_rate * beat_seconds))
                 frequency = scale[(beat + prompt_seed) % len(scale)]
@@ -808,8 +931,8 @@ class LocalSongSketcher:
                     + math.sin(2 * math.pi * bass * t) * 0.28
                 )
                 value *= envelope * amplitude
-                frames.extend(int(max(-32767, min(32767, value))).to_bytes(2, "little", signed=True))
-            handle.writeframes(bytes(frames))
+                frames.append(int(max(-32767, min(32767, value))))
+            handle.writeframes(frames.tobytes())
 
 
 class VideoQualityEvaluator:
