@@ -30,6 +30,23 @@ python3 -m human_ai.cli speak "Local speech is working"
 
 ## Gima Control Center
 
+For the current build order, capability gates, and next sprint, see
+[`docs/GIMA_IMPROVEMENT_PLAN.md`](/Users/gimhangunarathne/Documents/Gima/docs/GIMA_IMPROVEMENT_PLAN.md).
+
+### Easiest macOS start
+
+Double-click **`Start Gima.command`** in the Gima folder. It starts Gima in the
+background when needed and opens the upgraded interface at
+`http://127.0.0.1:8787/`. Double-clicking it again safely reuses the running
+server.
+
+The equivalent Terminal command is:
+
+```bash
+cd /Users/gimhangunarathne/Documents/Gima
+./Start\ Gima.command
+```
+
 Use the short `gima` command after installing the package, or run it immediately
 from this folder with `python3 -m human_ai.gima`.
 
@@ -202,6 +219,28 @@ lesson to `.human-ai/brain/teacher-learnings/`, and writes logs under
 `.human-ai/logs/`. It loads API keys from your shell files and from
 `.human-ai/secrets.env`, so `teacher-setup` is enough for scheduled
 ChatGPT/Gemini learning to run unattended.
+
+### Safe continuous cycle
+
+The upgraded macOS installation uses `com.gima.continuous-cycle` at 02:00 each
+day. Each bounded cycle:
+
+- asks the working Gemini teacher for one natural-language improvement lesson;
+- stores the lesson as review knowledge and rebuilds `brain.csv`;
+- creates a source recovery archive and a knowledge/continuous-state snapshot;
+- runs focused memory and artifact smoke tests;
+- retains the latest 14 source and state snapshots.
+
+Run or reinstall it manually:
+
+```bash
+python3 scripts/gima_continuous_cycle.py --provider gemini --rounds 1 --retention 14
+python3 scripts/install_gima_continuous_cycle.py
+```
+
+Continuous learning never modifies live source code. Upgrade suggestions remain
+review-only knowledge. Code upgrades still use the isolated `self-code` copy,
+tests, backup, and parent-approved `self-update-sync` workflow below.
 
 CSV memory is stored under `.human-ai/csv/`. The SQLite file
 `.human-ai/index.sqlite3` is only a generated search cache. Delete it and run
@@ -547,6 +586,19 @@ Sync into the live Gima only after parent approval:
 python3 -m human_ai.gima self-update-sync <update_id> --restart
 ```
 
+Gima can also implement a requested change inside the backed-up working copy by
+using the locally installed Codex coding runtime, then run the test suite and
+save a reviewable patch and logs:
+
+```bash
+python3 -m human_ai.gima self-code "add the feature description here"
+```
+
+The live workspace is not changed by `self-code`. Review the generated working
+copy, patch, `coding.log`, and `tests.log`, then use `self-update-ready` and the
+parent-approved `self-update-sync` workflow. The web interface exposes the same
+flow as **Implement in Isolated Copy** under Coding.
+
 `self-update-sync` asks for the parent password, creates another backup before
 copying, and refuses to overwrite a dirty live git workspace unless `--force` is
 provided.
@@ -556,3 +608,14 @@ provided.
 ```bash
 python3 -m unittest discover -s tests -v
 ```
+
+Run the live product audit against the currently running web UI:
+
+```bash
+python3 scripts/gima_world_test.py --base-url http://127.0.0.1:8787 --workspace /Users/gimhangunarathne/Documents/Gima
+```
+
+The audit checks the real server, core API contracts, brain search, chat,
+artifact generation, upload/download, blocked unsafe downloads, service worker
+version, and response-time budgets. Reports are written to
+`.human-ai/hands/out/test_reports/`.

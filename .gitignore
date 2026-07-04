@@ -4,3 +4,6 @@ __pycache__/
 .human-ai/
 .venv/
 config.local.json
+node_modules/
+scripts/node_modules
+outputs/

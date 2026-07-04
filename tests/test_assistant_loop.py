@@ -268,6 +268,20 @@ class LocalAssistantTests(unittest.TestCase):
         self.assertIn("frontier-ai-systems.md", reply.message)
         learn_research.assert_called_once_with("frontier-ai-systems")
 
+    def test_voice_can_learn_psychology_systems_research(self):
+        assistant = self.make_assistant()
+        assistant.config.permissions.require_scoped_grants = False
+        with patch.object(
+            assistant.agent,
+            "learn_research_profile",
+            return_value=Path("/tmp/psychology-systems.md"),
+        ) as learn_research:
+            reply = assistant.run_text_command("study all theories of psychology and implement them to Gima")
+        self.assertEqual(reply.action, "research_learn")
+        self.assertIn("psychology-inspired conversation systems", reply.message)
+        self.assertIn("psychology-systems.md", reply.message)
+        learn_research.assert_called_once_with("psychology-systems")
+
     def test_voice_can_ask_chatgpt_teacher(self):
         assistant = self.make_assistant()
         assistant.config.permissions.require_scoped_grants = False

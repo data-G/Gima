@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import csv
+import fcntl
 import hashlib
 import sqlite3
 import tempfile
 import uuid
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -107,6 +109,7 @@ class MemoryStore:
         self.audit_path = self.csv_dir / "audit.csv"
         self.source_reviews_path = self.csv_dir / "source_reviews.csv"
         self.parent_approvals_path = self.csv_dir / "parent_approvals.csv"
+        self.lock_path = data_dir / "memory.lock"
 
     def initialize(self) -> None:
         self.csv_dir.mkdir(parents=True, exist_ok=True)
@@ -168,33 +171,34 @@ class MemoryStore:
         """Archive old chunks for one file and activate its current chunk set."""
         self.initialize()
         prepared = [record.prepare() for record in records]
-        with self.knowledge_path.open(newline="", encoding="utf-8") as handle:
-            rows = list(csv.DictReader(handle))
-        known_checksums = {row["checksum"]: row for row in rows}
-        for row in rows:
-            if row["source"] == source and row["status"] == "active":
-                row["status"] = "archived"
-                row["updated_at"] = now_iso()
-        added = 0
-        for record in prepared:
-            existing = known_checksums.get(record.checksum)
-            if existing:
-                existing["status"] = "active"
-                existing["updated_at"] = now_iso()
-            else:
-                rows.append(asdict(record))
-                known_checksums[record.checksum] = rows[-1]
-                added += 1
-        with tempfile.NamedTemporaryFile(
-            "w", newline="", encoding="utf-8", dir=str(self.csv_dir), delete=False
-        ) as handle:
-            writer = csv.DictWriter(handle, fieldnames=RECORD_FIELDS)
-            writer.writeheader()
-            writer.writerows(rows)
-            temp_path = Path(handle.name)
-        temp_path.replace(self.knowledge_path)
-        self.rebuild_index()
-        return added
+        with self._write_lock():
+            with self.knowledge_path.open(newline="", encoding="utf-8") as handle:
+                rows = list(csv.DictReader(handle))
+            known_checksums = {row["checksum"]: row for row in rows}
+            for row in rows:
+                if row["source"] == source and row["status"] == "active":
+                    row["status"] = "archived"
+                    row["updated_at"] = now_iso()
+            added = 0
+            for record in prepared:
+                existing = known_checksums.get(record.checksum)
+                if existing:
+                    existing["status"] = "active"
+                    existing["updated_at"] = now_iso()
+                else:
+                    rows.append(asdict(record))
+                    known_checksums[record.checksum] = rows[-1]
+                    added += 1
+            with tempfile.NamedTemporaryFile(
+                "w", newline="", encoding="utf-8", dir=str(self.csv_dir), delete=False
+            ) as handle:
+                writer = csv.DictWriter(handle, fieldnames=RECORD_FIELDS)
+                writer.writeheader()
+                writer.writerows(rows)
+                temp_path = Path(handle.name)
+            temp_path.replace(self.knowledge_path)
+            self.rebuild_index(locked=True)
+            return added
 
     def find_by_checksum(self, value: str) -> List[Dict[str, str]]:
         self.initialize()
@@ -356,9 +360,20 @@ class MemoryStore:
         self.audit("parent_approval", target, f"{action}: {result}", "ok")
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(str(self.db_path))
+        connection = sqlite3.connect(str(self.db_path), timeout=30)
         connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA busy_timeout=30000")
         return connection
+
+    @contextmanager
+    def _write_lock(self):
+        self.data_dir.mkdir(parents=True, exist_ok=True)
+        with self.lock_path.open("w", encoding="utf-8") as handle:
+            fcntl.flock(handle, fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(handle, fcntl.LOCK_UN)
 
     @staticmethod
     def _create_schema(connection: sqlite3.Connection) -> None:
@@ -441,14 +456,18 @@ class MemoryStore:
                     [row["id"], row["message"], row["role"], row["category"], row["session_id"]],
                 )
 
-    def rebuild_index(self) -> int:
+    def rebuild_index(self, locked: bool = False) -> int:
+        if not locked:
+            with self._write_lock():
+                return self.rebuild_index(locked=True)
         self.csv_dir.mkdir(parents=True, exist_ok=True)
         self._ensure_csv(self.knowledge_path, RECORD_FIELDS)
         self._ensure_csv(self.conversations_path, CONVERSATION_FIELDS)
         self._ensure_csv(self.source_reviews_path, SOURCE_REVIEW_FIELDS)
         self._ensure_csv(self.parent_approvals_path, PARENT_APPROVAL_FIELDS)
-        if self.db_path.exists():
-            self.db_path.unlink()
+        for path in [self.db_path, self.db_path.with_name(f"{self.db_path.name}-wal"), self.db_path.with_name(f"{self.db_path.name}-shm")]:
+            if path.exists():
+                path.unlink()
         count = 0
         with self._connect() as connection:
             self._create_schema(connection)

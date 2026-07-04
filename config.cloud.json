@@ -1,0 +1,57 @@
+{
+  "name": "Gima",
+  "workspace": "/app",
+  "data_dir": "/tmp/gima-data",
+  "model": {
+    "enabled": false,
+    "base_url": "http://127.0.0.1:8080/v1",
+    "model": "cloud-teacher-cache",
+    "active_level": "cloud",
+    "timeout_seconds": 30,
+    "model_path": "",
+    "context_size": 2048,
+    "max_tokens": 384,
+    "host": "127.0.0.1",
+    "port": 8080,
+    "device": "none",
+    "gpu_layers": 0,
+    "warmup": false,
+    "profiles": {}
+  },
+  "web": {
+    "allowed_domains": []
+  },
+  "tools": {
+    "enabled": false,
+    "allowed_commands": []
+  },
+  "permissions": {
+    "require_scoped_grants": true,
+    "maximum_minutes": 10
+  },
+  "parent_approval": {
+    "reviewer_name": "Gima parent",
+    "password_sha256": ""
+  },
+  "violations": {
+    "email_to": "gimkan@gmail.com"
+  },
+  "teacher_models": {
+    "openai_model": "gpt-5.5",
+    "gemini_model": "gemini-2.5-flash",
+    "anthropic_model": "claude-sonnet-4-5",
+    "xai_model": "grok-4",
+    "deepseek_model": "deepseek-chat",
+    "openrouter_model": "openai/gpt-5.5",
+    "timeout_seconds": 60,
+    "free_quota_mode": true,
+    "free_quota_daily_limits": {
+      "chatgpt": 0,
+      "gemini": 40,
+      "anthropic": 5,
+      "xai": 0,
+      "deepseek": 0,
+      "openrouter": 40
+    }
+  }
+}

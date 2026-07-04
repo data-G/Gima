@@ -17,6 +17,7 @@ from .scene import LocalPersonDetector, save_observation
 from .services import (
     LipSyncPlanner,
     LocalMusicVideoRenderer,
+    FrontierVideoPlanner,
     MediaAnalyzer,
     MediaCapture,
     SafeToolRunner,
@@ -121,12 +122,19 @@ def parser() -> argparse.ArgumentParser:
     music_video = commands.add_parser("music-video-local", help="Render an MP3/audio file into a local MP4 visualizer")
     music_video.add_argument("audio", help="MP3 or other local audio file")
     music_video.add_argument("--prompt", required=True, help="Natural-language description saved with the project")
-    music_video.add_argument("--style", choices=["waveform", "spectrum"], default="waveform")
+    music_video.add_argument("--style", choices=["waveform", "spectrum", "professional"], default="professional")
     music_video.add_argument("--consent", action="store_true", help="Confirm you have rights/consent for the audio")
 
     video_eval = commands.add_parser("video-eval-local", help="Evaluate a generated MP4 with local Veo-style checks")
     video_eval.add_argument("video", help="Local generated MP4/video path")
     video_eval.add_argument("--manifest", help="Optional generation manifest JSON")
+
+    frontier_video = commands.add_parser("frontier-video-plan", help="Create a Veo/Seedance-style local video plan")
+    frontier_video.add_argument("--prompt", required=True, help="Video idea or production goal")
+    frontier_video.add_argument("--audio", help="Optional audio file for timing")
+    frontier_video.add_argument("--image", action="append", default=[], help="Optional image reference, repeatable")
+    frontier_video.add_argument("--target", default="veo_seedance", choices=["veo_seedance", "veo", "seedance", "open_local"])
+    frontier_video.add_argument("--duration", type=int, default=8, help="Target seconds for first generated clip")
 
     wake = commands.add_parser("wake", help="Process a transcript for the configured wake word")
     wake.add_argument("transcript", help="Speech transcript from any language")
@@ -317,7 +325,7 @@ def main(argv=None) -> int:
             print(f"Stored transcript as {record_id}")
         elif args.command == "lip-sync-plan":
             permissions.require("files")
-            project = LipSyncPlanner(config.resolved_data_dir / "media" / "lip_sync").create_project(
+            project = LipSyncPlanner(config.resolved_hands_out_dir / "lip_sync").create_project(
                 Path(args.audio),
                 Path(args.face),
                 args.prompt,
@@ -337,10 +345,13 @@ def main(argv=None) -> int:
             )
             print(f"Created lip-sync project: {project.project_dir}")
             print(f"Manifest: {project.manifest_path}")
+            print(f"Timing plan: {project.timing_path}")
+            print(f"Backend plan: {project.backend_path}")
+            print(f"Accuracy rubric: {project.eval_path}")
             print(f"Stored plan as {record_id}")
         elif args.command == "music-video-local":
             permissions.require("files")
-            project = LocalMusicVideoRenderer(config.resolved_data_dir / "media" / "music_video").render(
+            project = LocalMusicVideoRenderer(config.resolved_hands_out_dir / "music_video").render(
                 Path(args.audio),
                 args.prompt,
                 style=args.style,
@@ -360,6 +371,10 @@ def main(argv=None) -> int:
             )
             print(f"Rendered local music video: {project.output_path}")
             print(f"Manifest: {project.manifest_path}")
+            if project.script_path:
+                print(f"Video script: {project.script_path}")
+            if project.prompt_pack_path:
+                print(f"Prompt pack: {project.prompt_pack_path}")
             print(f"Stored render as {record_id}")
         elif args.command == "video-eval-local":
             permissions.require("files")
@@ -382,6 +397,33 @@ def main(argv=None) -> int:
             print(f"Video eval score: {result.score:.2f}/1.00")
             print(f"Report: {result.report_path}")
             print(f"Stored eval as {record_id}")
+        elif args.command == "frontier-video-plan":
+            permissions.require("files")
+            project = FrontierVideoPlanner(config.resolved_hands_out_dir / "frontier_video").plan(
+                args.prompt,
+                audio=Path(args.audio) if args.audio else None,
+                images=[Path(image) for image in args.image],
+                target=args.target,
+                duration_seconds=args.duration,
+            )
+            record_id = agent.memory.add(
+                Record(
+                    category="video",
+                    subcategory="frontier_video_plan",
+                    kind="generation_plan",
+                    title=f"Frontier video plan: {args.prompt[:80]}",
+                    content=project.manifest_path.read_text(encoding="utf-8"),
+                    source=str(project.manifest_path),
+                    media_path=str(project.project_dir),
+                    status="review",
+                )
+            )
+            print(f"Created frontier video plan: {project.project_dir}")
+            print(f"Manifest: {project.manifest_path}")
+            print(f"Prompt ladder: {project.prompt_ladder_path}")
+            print(f"Backend report: {project.backend_report_path}")
+            print(f"Eval rubric: {project.eval_rubric_path}")
+            print(f"Stored plan as {record_id}")
         elif args.command == "wake":
             result = WakeAssistant(config, agent.memory).respond(
                 args.transcript, capture_photo=args.capture_photo

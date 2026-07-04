@@ -13,6 +13,19 @@ from .config import Config
 DEFAULT_MODEL_DIR = Path("~/.local/share/gima/models").expanduser()
 
 DEFAULT_MODEL_LEVELS: Dict[str, Dict[str, Any]] = {
+    "tiny": {
+        "name": "Gima Tiny",
+        "model": "gima-local-llama3.2-1b-fast",
+        "model_path": str(Path("~/.qvac/models/f2bade0bc5cd4a8c_Llama-3.2-1B-Instruct-Q4_0.gguf").expanduser()),
+        "context_size": 1024,
+        "max_tokens": 64,
+        "device": "none",
+        "gpu_layers": 0,
+        "warmup": False,
+        "description": "Smallest local chat model for fast answers on this PC.",
+        "source": "local QVAC model",
+        "files": [],
+    },
     "fast": {
         "name": "Gima Fast",
         "model": "gima-local-qwen2.5-1.5b",
