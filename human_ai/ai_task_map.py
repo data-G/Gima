@@ -92,6 +92,7 @@ SOURCE_PACKS: dict[str, dict[str, str]] = {
 TASKS_BY_LETTER: dict[str, list[tuple[str, str, str, str, str, str]]] = {
     "A": [
         ("Agents", "Autonomous agent planning", "Break goals into plans, tools, observations, retries, and final artifacts.", "agents", "prompt, files, tools, memory", "plan, actions, logs, artifact"),
+        ("Safety", "Authorized research and security audit", "Ask authorization and scope questions before security, OSINT, privacy, or reverse-engineering-style work; otherwise provide public high-level analysis only.", "safety", "target, permission, scope, allowed/prohibited actions", "private responsible report"),
         ("Audio", "Audio transcription", "Convert speech, meetings, songs, and video audio into searchable text.", "audio", "audio/video", "transcript, timestamps"),
         ("Knowledge", "Answer retrieval", "Search trusted memory and sources before answering factual questions.", "knowledge", "question, source corpus", "answer, citations"),
     ],

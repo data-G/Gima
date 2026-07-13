@@ -15,6 +15,7 @@ The new white paper documents the architecture behind Gima:
 - readable local memory and retrieval;
 - a local 4B model with optional online AI teachers;
 - deterministic spreadsheet, document, media, and coding workflows;
+- AI engineering, OSINT research architecture, privacy engineering, and full-stack product capabilities;
 - bounded daily learning with versioned continuity snapshots;
 - isolated self-update copies, tests, approval, and rollback; and
 - the current evidence, limitations, and roadmap.
@@ -23,9 +24,9 @@ This is an engineering work in progress, not a claim of consciousness or unrestr
 
 Repository: https://github.com/data-G/Gima
 
-I would value feedback from people working on local-first software, AI agents, retrieval systems, multimodal tools, and responsible AI engineering.
+I would value feedback from people working on local-first software, AI agents, retrieval systems, OSINT research, privacy engineering, multimodal tools, and responsible full-stack AI products.
 
-#AIEngineering #LocalFirst #ResponsibleAI #Python #BuildInPublic
+#GimaAI #AIEngineer #OSINT #ResearchArchitecture #PrivacyEngineering #FullStackAI #AIEngineering #LocalFirst #ResponsibleAI #Python #BuildInPublic
 
 ## How to publish it
 

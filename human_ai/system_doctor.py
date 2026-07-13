@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import platform
 import shutil
 import subprocess
@@ -72,7 +73,9 @@ def build_doctor_report(config: Config, brain_status: dict[str, Any] | None = No
         "growth_plan": _growth_plan(hardware),
         "hardware_upgrade_plan": _hardware_upgrade_plan(hardware),
         "legal_earning_plan": _legal_earning_plan(),
+        "master_ai_director_plan": _master_ai_director_plan(hardware, effective_strategy),
         "autonomy_boundaries": _autonomy_boundaries(),
+        "criticism_defense_matrix": _criticism_defense_matrix(),
         "daily_improvement_plan": build_daily_improvement_plan(config, brain),
         "ai_era_requirements": build_ai_era_requirements(config, brain),
         "own_model_plan": build_own_model_plan(config, brain),
@@ -209,9 +212,13 @@ def build_ai_era_requirements(config: Config, brain_status: dict[str, Any] | Non
         "requirements": [
             _requirement("reliability", "Startup, brain readiness, errors, recovery, and uptime must be visible.", "started" if brain.get("running") else "needs_attention"),
             _requirement("truth", "Current facts need sources, citations, uncertainty flags, and no placeholder tables.", "started"),
+            _requirement("rag_validation", "Source-backed answers need contradiction notes, quote boundaries, and citation validation.", "started"),
             _requirement("memory", "Learning must be reviewable, deduplicated, source-backed, and searchable.", "started" if config.resolved_brain_csv_path.exists() else "needs_index"),
             _requirement("tools", "Files, spreadsheets, media, code, and web actions need structured inputs/outputs and logs.", "started"),
+            _requirement("artifact_qa", "Generated files need open-file checks, visual QA, schema checks, and repair loops.", "started"),
             _requirement("multimodal", "Image, audio, video, OCR, captions, and manifests must respect rights and consent.", "started"),
+            _requirement("benchmarks", "Architecture claims need benchmark prompts, metrics, samples, and failure cases.", "planned"),
+            _requirement("local_security", "Local-first storage still needs encryption roadmap, permissions, secret scans, and backups.", "started"),
             _requirement("legal_growth", "Money-making workflows must be legal, truthful, rights-safe, and approval-gated.", "started"),
             _requirement("self_improvement", "Code improvements require backup, isolated work, tests, review, and explicit sync approval.", "started"),
             _requirement("hardware_fit", f"Use {hardware.recommended_model}; heavy generation should use tools or approved providers until hardware improves.", "started"),
@@ -296,7 +303,12 @@ def build_area_agent_supervisor(config: Config, brain_status: dict[str, Any] | N
         _area("Model and routing", "started" if getattr(config.model, "model", "") else "needs_attention", f"Active model: {getattr(config.model, 'model', '')}", "Benchmark fast/strong local model and teacher routing."),
         _area("Artifacts and tables", "started" if hands_out.exists() else "needs_attention", "Reports, CSV/Excel/PDF/JPG-style output folders and manifests.", "Create one verified downloadable artifact and add a regression test."),
         _area("Video and media", "started" if deps.get("ffmpeg") and deps.get("ffprobe") else "needs_attention", "Image+audio MP4, advanced video-song renderer, lip-sync planning, director storyboard.", "Run a consented sample render and evaluate output metadata."),
-        _area("Image editing", "planned", "Provider/local image editing backend not connected inside Gima runtime.", "Add approved image generation/editing adapter with provenance logging."),
+        _area(
+            "Image editing",
+            "started" if os.environ.get("OPENAI_API_KEY") else "needs_attention",
+            "ChatGPT/OpenAI image generation adapter writes PNG files and manifests to hands/out when an OpenAI key is linked.",
+            "Save ChatGPT / OpenAI API key, generate one consented sample image, then add image-edit input support.",
+        ),
         _area("Voice and audio", "started" if deps.get("ffmpeg") and deps.get("whisper-cli") else "needs_attention", "Speech-to-text, macOS TTS, audio capture/transcription hooks.", "Add voice latency and multilingual evals."),
         _area("Research and truth", "started", "Web import, research profiles, citations, self-checks, current-source caution.", "Add claim-to-source scoring and trusted-source refresh cadence."),
         _area("Safety and permissions", "started", "Consent gates, private-network block, parent approval, audit CSV, legal boundaries.", "Add per-tool risk tiers and incident review tests."),
@@ -638,6 +650,70 @@ def _hardware_upgrade_plan(hardware: HardwareProfile) -> list[dict[str, str]]:
     ]
 
 
+def _master_ai_director_plan(hardware: HardwareProfile, effective_strategy: str) -> dict[str, Any]:
+    return {
+        "kind": "gima_master_ai_director_plan",
+        "hardware_reality": (
+            f"{hardware.cpu} with {hardware.memory_gb} GB RAM is a controller-class machine, not a frontier-model training box. "
+            "Do not attempt to run or train GPT-4o/Sora/Midjourney-class models locally."
+        ),
+        "north_star": "Use the Mac as a lightweight director: index, plan, route, verify, store memory, and orchestrate approved tools.",
+        "strategy": effective_strategy,
+        "local_budget": {
+            "cpu_role": "Run the web UI, file watchers, BM25/inverted-index search, small local chat, scripts, and QA tools.",
+            "ram_rule": "Keep heavy model loading optional; preserve RAM for browser, file parsing, indexes, and artifact generation.",
+            "best_local_models": "1B-4B quantized models for fast private responses; 7B only when latency is acceptable.",
+        },
+        "routing_rules": [
+            {
+                "task": "Any-file learning",
+                "local_first": "Extract text/metadata with Python libraries, OCR/ffmpeg when installed, and BM25 search.",
+                "cloud_when": "Only send snippets to teacher APIs when CLOUD_ALLOWED=true and the content is approved for cloud processing.",
+                "output": "Source-backed summary, searchable brain row, and review status.",
+            },
+            {
+                "task": "Deep reasoning and current research",
+                "local_first": "Retrieve relevant memory, outline assumptions, and prepare a precise prompt.",
+                "cloud_when": "Use OpenRouter/OpenAI/Gemini/Anthropic for high-value reasoning, web/current facts, or long context.",
+                "output": "Teacher answer stored as review memory with provider and provenance.",
+            },
+            {
+                "task": "Image/video/song generation",
+                "local_first": "Create storyboards, prompts, scripts, subtitles, QA manifests, and lightweight FFmpeg drafts.",
+                "cloud_when": "Use approved image/video/music APIs for actual frontier generation.",
+                "output": "Director pack plus generated files and rights/safety notes.",
+            },
+            {
+                "task": "Coding and self-improvement",
+                "local_first": "Inspect repo, plan patches, run tests, and write upgrade reports.",
+                "cloud_when": "Ask teacher models for architecture critique only after approval.",
+                "output": "Small, tested, reviewable improvements with rollback notes.",
+            },
+        ],
+        "agent_roles": [
+            {
+                "agent": "Thinker",
+                "job": "Create the strategy, task decomposition, assumptions, and success criteria.",
+            },
+            {
+                "agent": "Communicator",
+                "job": "Challenge the plan, identify missing evidence, privacy risk, cost risk, and user-facing clarity gaps.",
+            },
+            {
+                "agent": "Local Executive Controller",
+                "job": "Run local tools, file indexing, tests, artifact generation, and final response assembly.",
+            },
+        ],
+        "resource_policy": [
+            "Do not load heavy local models by default on 16 GB RAM.",
+            "Do not train frontier-scale models locally.",
+            "Use BM25/inverted indexes and deterministic tools before embeddings or large models.",
+            "Use cloud APIs only with explicit configuration, consent, and CLOUD_ALLOWED=true.",
+            "Keep every learning/update as reviewable memory until verified.",
+        ],
+    }
+
+
 def _legal_earning_plan() -> list[dict[str, str]]:
     return [
         {
@@ -699,6 +775,47 @@ def _autonomy_boundaries() -> list[dict[str, str]]:
             "area": "AI influencer identity",
             "allowed": "Create a transparent AI persona, style guide, content drafts, disclosure text, and analytics plan.",
             "blocked_without_user": "No pretending to be a real human, impersonating real people, faking lived experiences, or using unconsented face/voice/identity.",
+        },
+    ]
+
+
+def _criticism_defense_matrix() -> list[dict[str, str]]:
+    return [
+        {
+            "criticism": "Not fully autonomous",
+            "why_it_matters": "Gima should not claim complete unsupervised autonomy.",
+            "defense": "Frame autonomy as review-gated, scoped, logged, reversible, and blocked for spending/posting/deploying without approval.",
+            "implementation": "Doctor autonomy boundaries, permission gates, approval prompts, continuous logs.",
+        },
+        {
+            "criticism": "Evaluation still needed",
+            "why_it_matters": "Architecture claims require benchmark evidence.",
+            "defense": "Publish benchmark prompts, metrics, output samples, failure cases, and regression history.",
+            "implementation": "AI task map evaluation methods, focused unit tests, doctor next actions.",
+        },
+        {
+            "criticism": "Local storage can still leak",
+            "why_it_matters": "Local-first does not automatically mean secure.",
+            "defense": "Use encryption roadmap, permissioning, secret scanning, masked keys, backups, and Git hygiene.",
+            "implementation": "Local secrets file, masked UI, scoped tool runner, Git sync secret checks.",
+        },
+        {
+            "criticism": "RAG can still be wrong",
+            "why_it_matters": "Source-backed answers can misread sources.",
+            "defense": "Add contradiction notes, quote boundaries, citation validation, uncertainty flags, and source freshness checks.",
+            "implementation": "Research artifact route, memory source rows, web-import limits, planned claim-to-source scoring.",
+        },
+        {
+            "criticism": "Artifact tools can fail",
+            "why_it_matters": "Files may generate with formatting, schema, formula, or rendering errors.",
+            "defense": "Use open-file tests, visual QA, schema checks, file manifests, and repair loops.",
+            "implementation": "Artifact tests, generated manifests, download/open-location links, render-and-verify roadmap.",
+        },
+        {
+            "criticism": "Self-improvement can regress",
+            "why_it_matters": "Code changes may break the system.",
+            "defense": "Require backup, isolated copy, tests, diff review, rollback path, and release notes before sync.",
+            "implementation": "Self-update manager, backup tarballs, patch previews, test outputs, GitHub PR workflow.",
         },
     ]
 

@@ -81,6 +81,8 @@ class BrainServer:
             str(self.config.model.gpu_layers),
             "--jinja",
         ]
+        if "gemma" in self.config.model.model.casefold() or self.config.model.active_level == "gemma4_12b":
+            command.extend(["--reasoning", "off", "--reasoning-format", "none"])
         if not self.config.model.warmup:
             command.append("--no-warmup")
         self.config.resolved_data_dir.mkdir(parents=True, exist_ok=True)

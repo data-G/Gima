@@ -63,6 +63,31 @@ DEFAULT_MODEL_LEVELS: Dict[str, Dict[str, Any]] = {
             },
         ],
     },
+    "gemma4_12b": {
+        "name": "Gemma 4 12B QAT Q4",
+        "model": "google-gemma-4-12b-it-qat-q4_0",
+        "model_path": str(DEFAULT_MODEL_DIR / "gemma-4-12b-it-qat-q4_0.gguf"),
+        "context_size": 1024,
+        "max_tokens": 32,
+        "timeout_seconds": 75,
+        "device": "none",
+        "gpu_layers": 0,
+        "warmup": False,
+        "description": "Official Google Gemma 4 12B instruction-tuned QAT Q4 GGUF. Better reasoning and multimodal-ready, but heavy for this 16 GB RAM Mac.",
+        "source": "https://huggingface.co/google/gemma-4-12B-it-qat-q4_0-gguf",
+        "files": [
+            {
+                "name": "gemma-4-12b-it-qat-q4_0.gguf",
+                "url": "https://huggingface.co/google/gemma-4-12B-it-qat-q4_0-gguf/resolve/main/gemma-4-12b-it-qat-q4_0.gguf",
+                "size_mb": 6975.88,
+            },
+            {
+                "name": "mmproj-gemma-4-12b-it-qat-q4_0.gguf",
+                "url": "https://huggingface.co/google/gemma-4-12B-it-qat-q4_0-gguf/resolve/main/mmproj-gemma-4-12b-it-qat-q4_0.gguf",
+                "size_mb": 175.12,
+            },
+        ],
+    },
 }
 
 
@@ -74,6 +99,7 @@ class ModelLevel:
     model_path: Path
     context_size: int
     available: bool
+    status: str
     description: str
     source: str
     files: List[Dict[str, Any]]
@@ -101,6 +127,7 @@ class ModelLevelManager:
             model_path=model_path,
             context_size=int(profile.get("context_size", self.config.model.context_size)),
             available=self._profile_available(profile),
+            status=self._profile_status(profile),
             description=str(profile.get("description", "")),
             source=str(profile.get("source", "")),
             files=list(profile.get("files", [])),
@@ -119,7 +146,7 @@ class ModelLevelManager:
         downloaded: List[Path] = []
         for file_info in files:
             target = target_dir / str(file_info["name"])
-            if target.exists() and target.stat().st_size > 0:
+            if self._file_ready(target, file_info):
                 downloaded.append(target)
                 continue
             temp = target.with_suffix(target.suffix + ".part")
@@ -134,7 +161,7 @@ class ModelLevelManager:
         profile = self._profiles()[name.casefold().strip()]
         if not self._profile_available(profile):
             raise FileNotFoundError(
-                f"Model level {name} is not downloaded. Run `python3 -m human_ai.gima model-download {name}`."
+                f"Model level {name} is {self._profile_status(profile)}. Run `python3 -m human_ai.gima model-download {name}`."
             )
         values = self._config_model_values(profile, name.casefold().strip())
         if self.config_path:
@@ -154,15 +181,42 @@ class ModelLevelManager:
 
     @staticmethod
     def _profile_available(profile: Dict[str, Any]) -> bool:
+        return ModelLevelManager._profile_status(profile) == "ready"
+
+    @staticmethod
+    def _profile_status(profile: Dict[str, Any]) -> str:
         files = list(profile.get("files", []))
         if files:
             base = Path(profile["model_path"]).expanduser().parent
-            return all((base / str(file_info["name"])).exists() for file_info in files)
-        return Path(profile["model_path"]).expanduser().exists()
+            statuses = [ModelLevelManager._file_status(base / str(file_info["name"]), file_info) for file_info in files]
+            if all(status == "ready" for status in statuses):
+                return "ready"
+            if any(status == "incomplete" for status in statuses):
+                return "incomplete"
+            return "missing"
+        return "ready" if Path(profile["model_path"]).expanduser().exists() else "missing"
+
+    @staticmethod
+    def _file_ready(path: Path, file_info: Dict[str, Any]) -> bool:
+        return ModelLevelManager._file_status(path, file_info) == "ready"
+
+    @staticmethod
+    def _file_status(path: Path, file_info: Dict[str, Any]) -> str:
+        if not path.exists() or path.stat().st_size <= 0:
+            return "missing"
+        expected_mb = file_info.get("size_mb")
+        if expected_mb is None:
+            return "ready"
+        expected_bytes = int(float(expected_mb) * 1_000_000)
+        # Hugging Face reports may vary slightly, but multi-GB truncation must not be treated as ready.
+        tolerance = max(1_000_000, int(expected_bytes * 0.01))
+        if path.stat().st_size + tolerance < expected_bytes:
+            return "incomplete"
+        return "ready"
 
     @staticmethod
     def _config_model_values(profile: Dict[str, Any], level: str) -> Dict[str, Any]:
-        return {
+        values = {
             "enabled": True,
             "active_level": level,
             "model": str(profile["model"]),
@@ -173,6 +227,9 @@ class ModelLevelManager:
             "gpu_layers": int(profile.get("gpu_layers", 0)),
             "warmup": bool(profile.get("warmup", False)),
         }
+        if "timeout_seconds" in profile:
+            values["timeout_seconds"] = int(profile["timeout_seconds"])
+        return values
 
     def _write_config_model(self, values: Dict[str, Any]) -> None:
         if not self.config_path:

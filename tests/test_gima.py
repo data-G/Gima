@@ -169,6 +169,69 @@ class GimaControlCenterTests(unittest.TestCase):
         user_message = complete.call_args.args[0][1]["content"]
         self.assertEqual(user_message, "/no_think\nCalculate 17 times 19")
 
+    def test_chat_uses_tiny_prompt_for_small_context_model(self):
+        from human_ai.agent import Agent
+        from human_ai.config import load_config
+        from human_ai.memory import Record
+
+        raw = json.loads(self.config_path.read_text(encoding="utf-8"))
+        raw["model"] = {
+            "enabled": True,
+            "active_level": "fast",
+            "context_size": 1024,
+            "max_tokens": 256,
+        }
+        self.config_path.write_text(json.dumps(raw), encoding="utf-8")
+        agent = Agent(load_config(str(self.config_path)))
+        agent.memory.add(Record(category="technical", title="Large note", content="memory " * 1000))
+
+        with patch.object(agent.model, "complete", return_value="Gima is ready.") as complete:
+            self.assertEqual(agent.chat("is the brain working now", model_timeout_seconds=25), "Gima is ready.")
+
+        prompt = complete.call_args.args[0][0]["content"]
+        self.assertLess(len(prompt), 1800)
+        self.assertIn("Reply in 1-4 short sentences", prompt)
+        self.assertEqual(complete.call_args.kwargs["max_tokens"], 64)
+
+    def test_chat_uses_lean_prompt_for_gemma_12b_cpu_model(self):
+        from human_ai.agent import Agent
+        from human_ai.config import load_config
+        from human_ai.memory import Record
+
+        raw = json.loads(self.config_path.read_text(encoding="utf-8"))
+        raw["model"] = {
+            "enabled": True,
+            "active_level": "gemma4_12b",
+            "model": "google-gemma-4-12b-it-qat-q4_0",
+            "context_size": 1024,
+            "max_tokens": 32,
+        }
+        self.config_path.write_text(json.dumps(raw), encoding="utf-8")
+        agent = Agent(load_config(str(self.config_path)))
+        agent.memory.add(Record(category="technical", title="Large Gemma note", content="memory " * 1000))
+
+        with patch.object(agent.model, "complete", return_value="Gemma is running.") as complete:
+            self.assertEqual(agent.chat("is gemma working now", model_timeout_seconds=75), "Gemma is running.")
+
+        prompt = complete.call_args.args[0][0]["content"]
+        user_message = complete.call_args.args[0][1]["content"]
+        self.assertLess(len(prompt), 80)
+        self.assertIn("Reply in one short practical sentence", prompt)
+        self.assertNotIn("Large Gemma note", prompt)
+        self.assertTrue(user_message.startswith("/no_think\n"))
+        self.assertEqual(complete.call_args.kwargs["max_tokens"], 32)
+
+    def test_local_model_strips_gemma_channel_markup(self):
+        from human_ai.services import LocalModel
+
+        content = (
+            "<|channel>thought\n"
+            "The user asked for OK only.\n"
+            "<channel|>OK"
+        )
+
+        self.assertEqual(LocalModel._clean_llama_channel_content(content), "OK")
+
     def test_consciousness_framework_initializes_for_agent(self):
         from human_ai.agent import Agent
         from human_ai.config import load_config
@@ -252,13 +315,23 @@ class GimaControlCenterTests(unittest.TestCase):
         from human_ai.config import load_config
 
         agent = Agent(load_config(str(self.config_path)))
-        with patch.object(agent.teacher_models, "ask", return_value="plain lesson") as ask:
+        with patch.dict("os.environ", {"CLOUD_ALLOWED": "true"}), patch.object(agent.teacher_models, "ask", return_value="plain lesson") as ask:
             answer = agent.ask_teacher("chatgpt", "teach memory")
 
         self.assertEqual(answer, "plain lesson")
         sent_prompt = ask.call_args.args[1]
         self.assertIn("teach memory", sent_prompt)
         self.assertIn(PERMANENT_HUMAN_LANGUAGE_LEARNING_RULE, sent_prompt)
+
+    def test_teacher_learning_requires_cloud_allowed(self):
+        from human_ai.agent import Agent
+        from human_ai.config import load_config
+
+        agent = Agent(load_config(str(self.config_path)))
+        with patch.dict("os.environ", {}, clear=True), patch.object(agent.teacher_models, "ask") as ask:
+            with self.assertRaises(PermissionError):
+                agent.ask_teacher("chatgpt", "teach memory")
+            ask.assert_not_called()
 
     def test_teacher_learning_does_not_store_code_blocks(self):
         from human_ai.agent import Agent
@@ -373,6 +446,23 @@ class GimaControlCenterTests(unittest.TestCase):
             save_teacher_secret(Path(self.temp.name), "gemini", "new-key")
             self.assertEqual(os.environ["GEMINI_API_KEY"], "new-key")
 
+    def test_saving_teacher_key_rejects_non_ascii_label_text(self):
+        from human_ai.secrets import save_teacher_secret
+
+        with self.assertRaises(ValueError):
+            save_teacher_secret(Path(self.temp.name), "openrouter", "Vocabulary 時間管理")
+
+    def test_teacher_secret_status_marks_non_ascii_key_invalid(self):
+        from human_ai.secrets import teacher_secret_status
+
+        secrets = Path(self.temp.name) / ".human-ai" / "secrets.env"
+        secrets.parent.mkdir(parents=True, exist_ok=True)
+        secrets.write_text("OPENROUTER_API_KEY='Vocabulary 時間管理'\n", encoding="utf-8")
+        rows = teacher_secret_status(Path(self.temp.name))
+        openrouter = next(row for row in rows if row["provider"] == "openrouter")
+        self.assertEqual(openrouter["available"], "no")
+        self.assertEqual(openrouter["status"], "invalid")
+
     def test_ai_list_loads_private_env_file(self):
         secrets = Path(self.temp.name) / ".human-ai" / "secrets.env"
         secrets.parent.mkdir(parents=True, exist_ok=True)
@@ -468,6 +558,57 @@ class GimaControlCenterTests(unittest.TestCase):
         self.assertIn("fast", output)
         self.assertIn("strong", output)
 
+    def test_model_download_accepts_custom_configured_level(self):
+        model_dir = Path(self.temp.name) / "models"
+        model_dir.mkdir()
+        custom_model = model_dir / "custom.gguf"
+        custom_model.write_text("fake", encoding="utf-8")
+        raw = json.loads(self.config_path.read_text(encoding="utf-8"))
+        raw["model"]["profiles"] = {
+            "custom_12b": {
+                "name": "Custom 12B",
+                "model": "custom-12b",
+                "model_path": str(custom_model),
+                "context_size": 4096,
+                "max_tokens": 128,
+                "files": [],
+            }
+        }
+        self.config_path.write_text(json.dumps(raw), encoding="utf-8")
+
+        output = self.run_gima("model-download", "custom_12b")
+
+        self.assertIn(f"Ready: {custom_model}", output)
+
+    def test_model_level_with_truncated_file_is_incomplete_not_ready(self):
+        from human_ai.config import load_config
+        from human_ai.model_levels import ModelLevelManager
+
+        model_dir = Path(self.temp.name) / "models"
+        model_dir.mkdir()
+        truncated = model_dir / "gemma.gguf"
+        truncated.write_bytes(b"too small")
+        raw = json.loads(self.config_path.read_text(encoding="utf-8"))
+        raw["model"]["profiles"] = {
+            "gemma4_12b": {
+                "name": "Gemma Test",
+                "model": "gemma-test",
+                "model_path": str(truncated),
+                "context_size": 8192,
+                "max_tokens": 128,
+                "files": [{"name": truncated.name, "url": "https://example.com/gemma", "size_mb": 100.0}],
+            }
+        }
+        self.config_path.write_text(json.dumps(raw), encoding="utf-8")
+
+        manager = ModelLevelManager(load_config(str(self.config_path)), str(self.config_path))
+        level = manager.level("gemma4_12b")
+
+        self.assertFalse(level.available)
+        self.assertEqual(level.status, "incomplete")
+        with self.assertRaises(FileNotFoundError):
+            manager.apply_level("gemma4_12b")
+
     def test_model_use_updates_tiny_level(self):
         model_dir = Path(self.temp.name) / "models"
         model_dir.mkdir()
@@ -556,12 +697,12 @@ class GimaControlCenterTests(unittest.TestCase):
     def test_ai_task_map_refresh_list_and_schedule(self):
         output = self.run_gima("ai-task-map-refresh", "--offline")
         self.assertIn("AI task map saved", output)
-        self.assertIn("Rows: 78", output)
+        self.assertIn("Rows: 79", output)
         task_map = Path(self.temp.name) / ".human-ai" / "brain" / "ai_task_map.csv"
         self.assertTrue(task_map.exists())
         with task_map.open(newline="", encoding="utf-8") as handle:
             rows = list(csv.DictReader(handle))
-        self.assertEqual(len(rows), 78)
+        self.assertEqual(len(rows), 79)
         self.assertEqual({row["letter"] for row in rows}, set("ABCDEFGHIJKLMNOPQRSTUVWXYZ"))
         self.assertTrue(any("Seedance-style video planning" == row["task"] for row in rows))
         self.assertTrue(any("Codex" in row["provider_examples"] for row in rows))
@@ -1028,6 +1169,19 @@ class GimaControlCenterTests(unittest.TestCase):
         self.assertIn("heart_violation", (Path(self.temp.name) / ".human-ai" / "csv" / "audit.csv").read_text())
         reports = list((Path(self.temp.name) / ".human-ai" / "violations").glob("heart_violation_*.txt"))
         self.assertEqual(len(reports), 1)
+
+    def test_chat_answers_gima_identity_not_raw_provider_identity(self):
+        from human_ai.agent import Agent
+        from human_ai.config import load_config
+
+        agent = Agent(load_config(str(self.config_path)))
+        answer = agent.chat("who is your developer and how can you develop")
+
+        self.assertIn("Gima", answer)
+        self.assertIn("Gimhan Gunarathne", answer)
+        self.assertIn("Codex", answer)
+        self.assertIn("reviewable", answer)
+        self.assertNotIn("developed by OpenAI", answer)
 
     def test_violation_report_command_emails_default_recipient(self):
         with patch("human_ai.violations.ViolationReporter.send_with_apple_mail") as send:

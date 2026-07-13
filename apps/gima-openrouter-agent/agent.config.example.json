@@ -1,0 +1,20 @@
+{
+  "model": "openai/gpt-4o-mini",
+  "fallbackModels": [],
+  "maxSteps": 8,
+  "maxCost": 0.25,
+  "sessionDir": ".sessions",
+  "httpReferer": "http://127.0.0.1:8787/",
+  "appTitle": "Gima OpenRouter Agent",
+  "provider": {
+    "allowFallbacks": true,
+    "dataCollection": "deny",
+    "sort": "latency",
+    "zdr": false
+  },
+  "display": {
+    "toolDisplay": "grouped",
+    "inputStyle": "bordered",
+    "reasoning": false
+  }
+}

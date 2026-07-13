@@ -255,6 +255,27 @@ python3 -m human_ai.cli conversation-history "umbrella"
 python3 -m human_ai.cli conversation-history --session-id SESSION_ID
 ```
 
+## Master AI Director Strategy
+
+Gima should treat a 16 GB RAM Intel Mac as a **controller-class machine**, not a
+frontier-model training server. It should keep local compute light: file parsing,
+BM25/inverted-index search, small quantized chat, scripting, artifact QA, and
+memory. Heavy reasoning, current research, image generation, video generation,
+and long-context synthesis should route to approved cloud APIs only when
+`CLOUD_ALLOWED=true` and the user has consented.
+
+The intended architecture is:
+
+- **Thinker:** decomposes the task and defines success criteria.
+- **Communicator:** challenges assumptions, privacy risk, evidence quality, and
+  cost.
+- **Local Executive Controller:** runs local tools, indexes files, generates
+  artifacts, tests changes, and saves reviewable memory.
+
+This does not beat frontier AI by raw compute. It competes by orchestration:
+local privacy, fast retrieval, teacher-student summaries, reviewable memory, and
+automated workflows that connect many tools into one command deck.
+
 ## Capabilities
 
 | Capability | Available now | Optional enhancement |
@@ -300,6 +321,13 @@ python3 -m human_ai.cli memory-approve kb_RECORD_ID
 Tool execution is disabled by default. When enabled, the runner accepts only
 configured executable names, uses the configured workspace as its working
 directory, captures output, enforces a timeout, and writes an audit event.
+
+Authorized research and security-audit-style requests are permission-gated. Gima
+can analyze public docs, public websites, official API documentation,
+open-source code, and user-owned systems, but it must ask for ownership or
+written permission, scope, allowed actions, prohibited actions, and private-report
+preference before deeper security or reverse-engineering work. See
+[`docs/AUTHORIZED_RESEARCH_SECURITY_AUDIT.md`](/Users/gimhangunarathne/Documents/Gima/docs/AUTHORIZED_RESEARCH_SECURITY_AUDIT.md).
 
 No spoken phrase or password grants unlimited machine ownership. A phrase such
 as `Gima@3152` should not be used as a master unlock. Use scoped terminal grants
@@ -551,6 +579,58 @@ brew install ffmpeg tesseract poppler miller csvkit
 For speech recognition and local models, build or install `whisper.cpp` and
 `llama.cpp` separately, then select small quantized models suitable for an Intel
 Mac with 16 GB RAM.
+
+### Optional Local Transformers / Gemma Chat
+
+The web UI includes a **Local Transformers Chat** card for running Hugging Face
+text-generation models such as `google/gemma-2-2b-it`. It saves the prompt,
+response, and manifest under `hands/out/transformers_text`.
+
+Install only when you want this local Python pipeline:
+
+```bash
+python3 -m pip install --upgrade torch transformers accelerate sentencepiece
+```
+
+On a Mac, choose `mps` or `auto` in the UI. Keep **local files only** enabled for
+offline/cache-only runs. Turn it off only when you intentionally allow
+Transformers to download a model from Hugging Face.
+
+### Optional WhatsApp Messaging
+
+The web UI includes a **WhatsApp Messenger** card. Draft mode creates a local
+`wa.me` link for review in WhatsApp. Direct sending uses the official WhatsApp
+Cloud API only when these are configured:
+
+```bash
+export WHATSAPP_CLOUD_TOKEN="..."
+export WHATSAPP_PHONE_NUMBER_ID="..."
+export CLOUD_ALLOWED=true
+```
+
+For retrieval, Gima keeps a local searchable index of WhatsApp drafts, outbound
+API sends, and inbound WhatsApp Cloud webhook messages. Configure Meta's webhook
+callback to:
+
+```text
+https://your-public-tunnel-or-domain/api/whatsapp/webhook
+```
+
+and set:
+
+```bash
+export WHATSAPP_WEBHOOK_VERIFY_TOKEN="choose-a-long-random-token"
+```
+
+Optional webhook signature verification:
+
+```bash
+export WHATSAPP_APP_SECRET="..."
+```
+
+Use it only for expected, permissioned messages. Gima does not read old chats
+from your personal WhatsApp app, bypass WhatsApp limits, automate spam, or
+expose the token in the browser.
 
 ## Safety Model
 

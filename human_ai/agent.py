@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 from typing import Dict, List, Tuple
 
+from .authorized_research import authorized_research_gate_response
 from .brain_index import rebuild_brain_csv
 from .consciousness import ConsciousnessGuide
 from .config import Config
@@ -15,7 +16,7 @@ from .psychology import PsychologyGuide
 from .quota import FreeQuotaTracker
 from .readers import iter_files, read_file
 from .research_reasoning import ResearchReasoner
-from .services import LocalModel, TeacherModelClient, WebImporter
+from .services import LocalModel, TeacherModelClient, WebImporter, require_cloud_allowed
 from .teacher_cache import TeacherAnswerCache
 from .violations import ViolationReporter
 
@@ -368,6 +369,7 @@ class Agent:
         if provider_name == "local":
             answer = self._ask_local_teacher(teacher_prompt)
         else:
+            require_cloud_allowed(f"{provider_name} teacher model request")
             answer = self.teacher_models.ask(provider_name, teacher_prompt)
         return self._store_teacher_answer(provider_name, prompt, answer)
 
@@ -739,51 +741,85 @@ class Agent:
             )
             self.memory.append_conversation(self.session_id, "assistant", answer)
             return answer
+        audit_gate = authorized_research_gate_response(message)
+        if audit_gate:
+            self.memory.audit("authorized_research_gate", message[:120], "Asked for permission, scope, allowed/prohibited actions, and private-report preference", "review")
+            self.memory.append_conversation(self.session_id, "assistant", audit_gate)
+            return audit_gate
         direct_reply = self._direct_chat_reply(message)
         if direct_reply:
             self.memory.append_conversation(self.session_id, "assistant", direct_reply)
             return direct_reply
-        compact_prompt = self.config.model.active_level == "strong" or model_timeout_seconds is not None
-        memory_limit = 2 if compact_prompt else 6
-        memory_chars = 420 if compact_prompt else 1200
-        matches = self.search(message, limit=memory_limit)
+        model_name = self.config.model.model.casefold()
+        small_context = self.config.model.context_size <= 1536
+        slow_cpu_model = "gemma" in model_name or "12b" in model_name or self.config.model.active_level == "gemma4_12b"
+        compact_prompt = small_context or slow_cpu_model or self.config.model.active_level == "strong" or model_timeout_seconds is not None
+        memory_limit = 0 if slow_cpu_model else 1 if small_context else 2 if compact_prompt else 6
+        memory_chars = 0 if slow_cpu_model else 160 if small_context else 420 if compact_prompt else 1200
+        matches = self.search(message, limit=memory_limit) if memory_limit else []
         context = "\n\n".join(
             f"[{row['id']}] {row['title']}\n{row['content'][:memory_chars]}" for row in matches
         )
         if self.config.model.enabled:
             try:
                 heart_text = self.heart.active_text()
-                if compact_prompt:
+                if slow_cpu_model:
+                    heart_text = heart_text[:160]
+                elif small_context:
+                    heart_text = heart_text[:260]
+                elif compact_prompt:
                     heart_text = heart_text[:900]
                 psychology_text = self.psychology.prompt_guidance(message)
-                if compact_prompt:
+                if slow_cpu_model:
+                    psychology_text = ""
+                elif small_context:
+                    psychology_text = psychology_text[:220]
+                elif compact_prompt:
                     psychology_text = psychology_text[:900]
                 consciousness_text = self.consciousness.prompt_guidance(message)
-                if compact_prompt:
+                if slow_cpu_model:
+                    consciousness_text = ""
+                elif small_context:
+                    consciousness_text = consciousness_text[:180]
+                elif compact_prompt:
                     consciousness_text = consciousness_text[:900]
-                prompt = (
-                    "You are Gima, a local personal AI assistant running on this Mac. "
-                    "Speak in clear English. Be conversational, practical, and concise. "
-                    "Use retrieved memory when it helps, but do not invent facts. "
-                    "Never violate Gima heart policies. "
-                    "Use psychology-inspired guidance only to improve listening, motivation, clarity, and emotional care. "
-                    "Use consciousness-inspired self-monitoring only as a transparent computational state loop. "
-                    "Do not diagnose, treat, or claim to be a therapist. "
-                    "Do not claim to be conscious, sentient, alive, human, or to have real feelings. "
-                    f"{PERMANENT_HUMAN_LANGUAGE_LEARNING_RULE} "
-                    "If memory is missing, say what you can infer and what you do not know. "
-                    "Do not claim you used the camera, microphone, files, web, or shell unless a tool result confirms it. "
-                    "When the user asks for an action, explain whether it is available and what permission is needed. "
-                    "Keep answers short unless the user asks for detail.\n\nRetrieved local memory:\n"
-                    f"{context or '[no matching memory]'}\n\n{psychology_text}\n\n{consciousness_text}\n\nGima heart policies:\n{heart_text}"
-                )
+                if slow_cpu_model:
+                    prompt = "You are Gima. Reply in one short practical sentence."
+                elif small_context:
+                    prompt = (
+                        "You are Gima, a local-first AI assistant on this Mac. "
+                        "Reply in 1-4 short sentences. Be direct, practical, and conversational. "
+                        "Use memory only if relevant. Do not invent facts or claim tools were used unless confirmed. "
+                        "Do not claim to be conscious, human, a therapist, or a doctor.\n\n"
+                        f"Memory:\n{context or '[none]'}\n\n"
+                        f"Care guide:\n{psychology_text}\n\n"
+                        f"Self-monitoring guide:\n{consciousness_text}\n\n"
+                        f"Safety:\n{heart_text}"
+                    )
+                else:
+                    prompt = (
+                        "You are Gima, a local personal AI assistant running on this Mac. "
+                        "Speak in clear English. Be conversational, practical, and concise. "
+                        "Use retrieved memory when it helps, but do not invent facts. "
+                        "Never violate Gima heart policies. "
+                        "Use psychology-inspired guidance only to improve listening, motivation, clarity, and emotional care. "
+                        "Use consciousness-inspired self-monitoring only as a transparent computational state loop. "
+                        "Do not diagnose, treat, or claim to be a therapist. "
+                        "Do not claim to be conscious, sentient, alive, human, or to have real feelings. "
+                        f"{PERMANENT_HUMAN_LANGUAGE_LEARNING_RULE} "
+                        "If memory is missing, say what you can infer and what you do not know. "
+                        "Do not claim you used the camera, microphone, files, web, or shell unless a tool result confirms it. "
+                        "When the user asks for an action, explain whether it is available and what permission is needed. "
+                        "Keep answers short unless the user asks for detail.\n\nRetrieved local memory:\n"
+                        f"{context or '[no matching memory]'}\n\n{psychology_text}\n\n{consciousness_text}\n\nGima heart policies:\n{heart_text}"
+                    )
                 inference_message = message
-                if "qwen3" in self.config.model.model.casefold():
+                if "qwen3" in model_name or slow_cpu_model:
                     inference_message = f"/no_think\n{message}"
                 answer = self.model.complete(
                     [{"role": "system", "content": prompt}, {"role": "user", "content": inference_message}],
                     timeout_seconds=model_timeout_seconds,
-                    max_tokens=max_tokens,
+                    max_tokens=min(max_tokens or self.config.model.max_tokens, 32) if slow_cpu_model else min(max_tokens or self.config.model.max_tokens, 64) if small_context else max_tokens,
                 )
             except Exception as error:
                 if not fallback_on_model_error:
@@ -792,10 +828,8 @@ class Agent:
                 model_error = str(error)
                 if isinstance(error, TimeoutError) or "timed out" in model_error.casefold():
                     reason = "Gima's local brain did not reply within the response limit."
-                elif isinstance(error, (ConnectionError, OSError)) or "connection refused" in model_error.casefold():
-                    reason = "Gima's local brain is starting or temporarily unavailable."
                 else:
-                    reason = "Gima's local brain could not complete this response."
+                    reason = "Gima's local model could not complete this response, so I answered from Gima memory instead."
                 answer = self._memory_fallback_answer(message, matches, reason)
         elif matches:
             answer = self._memory_fallback_answer(message, matches, "Local model is disabled.")
@@ -811,8 +845,62 @@ class Agent:
         normalized = " ".join(message.casefold().strip().strip("!.?").split())
         if normalized in {"hi", "hello", "hey", "hi gima", "hello gima", "hey gima"}:
             return "Hi. I am here and ready."
-        if normalized in {"are you there", "are you there gima", "test", "ping"}:
-            return "Yes. Gima is running and replying."
+        if normalized in {"are you there", "are you there gima", "test", "ping", "is it working", "is it working now", "is gima working"}:
+            return "Yes. Gima is running and replying. The local brain is online, memory search is working, and linked AI keys are saved. Cloud AI is used only when cloud mode is allowed and a linked Chat mode is selected."
+        if any(
+            phrase in normalized
+            for phrase in {
+                "who is your developer",
+                "who developed you",
+                "who made you",
+                "who built you",
+                "how can you develop",
+                "how do you develop",
+                "how can gima develop",
+                "how can gima improve",
+            }
+        ):
+            return (
+                "I am Gima, your local-first AI workspace in this project on your Mac. "
+                "Gimhan Gunarathne is the project owner/developer, and Codex can help implement upgrades in the codebase. "
+                "I do not rewrite myself silently: improvements should happen through a reviewable loop of inspect, plan, edit in the repo or copied workspace, run tests, write an upgrade report, then restart/sync after approval. "
+                "Linked models such as ChatGPT/OpenAI, Gemini, Anthropic, and OpenRouter can act as optional teacher engines, but the Gima app, memory, tools, and safety gates stay local-first."
+            )
+        if any(
+            phrase in normalized
+            for phrase in {
+                "self code",
+                "self-code",
+                "code itself",
+                "update itself",
+                "upgrade itself",
+                "self update",
+                "self-update",
+                "make a ai screen recorder button",
+                "make an ai screen recorder button",
+                "screen recorder button",
+                "record my screen",
+                "record the screen",
+                "screen record",
+                "screen recording",
+                "video record what i do",
+                "video record of what i do",
+                "record video of what i do",
+                "record my actions",
+            }
+        ):
+            return (
+                "Yes. Gima can self-code safely through the Coding panel. "
+                "Use Coding -> Create Vibe Code Plan to inspect the repo and prepare an isolated copy, then Implement in Isolated Copy to patch and test without touching the live app. "
+                "Live sync still needs review so Gima cannot silently rewrite itself. "
+                "This build also includes a local Screen Rec button: it records with browser permission, saves the WebM into hands/in, and attaches it to your next prompt."
+            )
+        if any(phrase in normalized for phrase in {"connect codex", "codex connect", "use codex", "codex mode", "link codex"}):
+            return (
+                "Codex is connected on this Mac through the local Codex CLI and Gima's Coding panel. "
+                "Use Coding -> Create Vibe Code Plan for a safe plan, then Implement in Isolated Copy to let Codex edit a copied workspace and run tests. "
+                "Gima will not silently overwrite the live app; review and sync stay gated."
+            )
         return ""
 
     def _memory_fallback_answer(self, message: str, matches, reason: str) -> str:

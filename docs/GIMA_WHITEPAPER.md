@@ -3,7 +3,7 @@
 ![Gima logo](assets/whitepaper/gima_logo_circle.png)
 
 **A local-first AI workspace for memory, research, artifact creation, media workflows, and safe self-improvement**
-Version 2.1 | 4 July 2026
+Version 2.4 | 4 July 2026
 Author: Gimhan Gunarathne
 Project: Gima / Human AI Local
 Repository: https://github.com/data-G/Gima
@@ -15,6 +15,17 @@ Repository: https://github.com/data-G/Gima
 Gima is a local-first AI workspace built to make a personal AI useful, inspectable, and controllable on everyday hardware. It combines local memory, a browser-based chat interface, optional cloud model gateways, source-backed browsing, artifact generation, media planning, and review-gated self-improvement.
 
 Gima is not designed as an uncontrolled autonomous system. It is designed as a practical workspace where the user can see what was used, what was created, where files are stored, which provider answered, and what still needs review.
+
+The project direction is a professional AI operations cockpit: a personal system that can research, create, remember, generate files, plan media, and improve through visible engineering loops instead of hidden automation.
+
+### Professional Capability Tracks
+
+| Track | What Gima Supports |
+|---|---|
+| Gima AI Engineer | Model routing, local-model fallback, teacher-model gateways, agent workflows, testing, evaluation, and safe self-improvement. |
+| OSINT Research Architect | Source-backed web research, authorized research gates, public-source collection, citation registers, contradiction notes, research dossiers, and exportable evidence tables. |
+| Privacy Engineer | Local-first memory, masked secrets, permission checks, cloud-use gating, provenance manifests, protected paths, and review queues. |
+| Full-Stack AI Builder | Python backend, browser UI, local files, artifact generation, API integrations, GitHub/deployment workflows, and user-facing product documentation. |
 
 ### Core Proposition
 
@@ -50,11 +61,15 @@ Gima should become a personal AI operating workspace that can:
 
 - answer from local memory with traceable context;
 - browse the public web when current information is needed;
+- support OSINT-style public research with source registers and uncertainty notes;
+- support authorized research and security-audit workflows only after ownership, scope, allowed actions, prohibited actions, and private-report preference are confirmed;
 - create business-grade reports, costing tables, and source registers;
 - generate files in Excel, CSV, Markdown, PDF, and JPG formats;
+- hold text conversations, save conversation history, and support voice/wake-word interaction;
 - use linked models through OpenRouter, OpenAI, Gemini, Anthropic, and other providers;
 - plan media workflows with camera angles, scene beats, human emotion, and audio timing;
-- help with coding, GitHub sync, and deployment preparation;
+- help with AI engineering, full-stack coding, GitHub sync, and deployment preparation;
+- protect privacy through local-first storage, secret masking, explicit cloud gates, and provenance logs;
 - maintain daily improvement logs and capability dashboards;
 - help prepare legal earning assets such as proposals, portfolio posts, and whitepapers.
 
@@ -125,7 +140,31 @@ This view shows the media workflow area, including image-plus-audio inputs and d
 
 ---
 
-## 5. Memory and Filesystem Model
+## 5. Conversational Status
+
+Gima is designed to be conversational first: the user should be able to chat, ask follow-up questions, speak commands, and have the interaction saved into local memory.
+
+| Area | Current Status | Evidence / Implementation |
+|---|---|---|
+| Text chat | Working | Web UI conversations save to local conversation logs and memory. |
+| Conversational memory | Working | `MemoryStore` stores user and assistant turns in searchable conversation CSV files. |
+| Wake word | Working / tested | `WakeAssistant` detects "Gima" and aliases without matching word fragments. |
+| Speak replies | Working where local voice backend is available | `Voice().speak(...)` is used by wake and assistant flows. |
+| Direct voice conversation | Started | `LocalAssistant.run_conversation(...)` supports turn-taking, filler transcript cleanup, and stop phrases such as "end game". |
+| Multilingual speech normalization | Started | Unicode-preserving speech normalization supports mixed-language transcripts. |
+| Realtime voice UI | Planned | Browser microphone, live transcription, streaming speech, interruption, and push-to-talk controls should be added to the web UI. |
+
+Professional direction:
+
+- Gima should show a visible conversation status: listening, thinking, speaking, saving memory, or waiting.
+- Spoken replies should be optional and user-controlled.
+- Voice transcripts should be saved locally with category `voice`.
+- The user should be able to stop voice interaction at any time.
+- Voice features must respect microphone permission and should not record silently.
+
+---
+
+## 6. Memory and Filesystem Model
 
 Gima's durable state is stored under the local `.human-ai` workspace.
 
@@ -143,7 +182,7 @@ This makes Gima auditable. A user can inspect the memory, output files, and logs
 
 ---
 
-## 6. Model and Provider Strategy
+## 7. Model and Provider Strategy
 
 Gima uses a hybrid model approach.
 
@@ -190,7 +229,23 @@ Recommended next improvements:
 
 ---
 
-## 7. Browsing and Current Information
+## 8. Browsing and Current Information
+
+## Authorized Research and Security Audit Module
+
+Gima includes an Authorized Research & Security Audit module for legal, ethical, and permitted research into public systems, websites, APIs, AI tools, open-source software, and user-owned projects.
+
+Allowed work includes public documentation analysis, website/article summaries, AI tool and API comparison, open-source code review, user-owned codebase inspection, permitted architecture documentation, official-doc API integration plans, user-owned security checks, bug finding in user-owned projects, responsible vulnerability reports, privacy/security recommendations, and public changelog/release/pricing/benchmark monitoring.
+
+Before any security or reverse-engineering-style task, Gima must ask:
+
+1. Do you own this system or have written permission?
+2. What is the scope?
+3. What actions are allowed?
+4. What actions are prohibited?
+5. Should the result be a private report only?
+
+If permission is not confirmed, Gima only provides high-level public research and safe analysis. It must not bypass login, payment, rate limits, CAPTCHA, or API restrictions; steal keys, tokens, cookies, credentials, or private data; scrape private content; extract proprietary model weights, prompts, datasets, or hidden system instructions; clone paid services illegally; attack systems; create malware, phishing, spyware, credential harvesting, or exploit automation; perform unauthorized penetration testing; deanonymize private people; or publish sensitive personal data.
 
 Gima supports explicit browsing routes:
 
@@ -217,7 +272,7 @@ This is a key reliability rule:
 
 ---
 
-## 8. Artifact Generation
+## 9. Artifact Generation
 
 Gima is designed to produce real files.
 
@@ -234,7 +289,7 @@ Gima should not create placeholder tables just to appear helpful. If a dataset i
 
 ---
 
-## 9. Media Workflows
+## 10. Media Workflows
 
 Gima has early-stage media capabilities for:
 
@@ -260,7 +315,7 @@ This protects users from overclaiming. A local draft can be useful, but it shoul
 
 ---
 
-## 10. Safety and Governance
+## 11. Safety and Governance
 
 Gima uses application controls instead of relying only on prompts.
 
@@ -289,9 +344,20 @@ flowchart TD
 | Unsafe self-editing | Backup, isolated work, tests, explicit sync approval |
 | Media misuse | Consent gates and provenance manifests |
 
+### Criticism and Defense Matrix
+
+| Potential criticism | Why it matters | Defense built into Gima |
+|---|---|---|
+| Not fully autonomous | Gima should not claim complete unsupervised autonomy. | Autonomy is framed as review-gated, scoped, logged, and reversible. Spending, posting, deployment, client contact, and live self-editing remain approval-gated. |
+| Evaluation still needed | Architecture claims require benchmark evidence. | Gima tracks benchmark prompts, metrics, output samples, failure cases, and regression tests as part of the improvement loop. |
+| Local storage can still leak | Local-first does not automatically mean secure. | The roadmap includes encryption, permissioning, masked keys, secret scanning, Git hygiene, backups, and recovery tests. |
+| RAG can still be wrong | Source-backed answers can misread sources. | Gima adds contradiction notes, quote boundaries, citation validation, uncertainty flags, and source freshness checks. |
+| Artifact tools can fail | Files may generate with formatting, schema, formula, or rendering errors. | Gima uses open-file checks, visual QA, schema checks, manifests, and repair loops. |
+| Self-improvement can regress | Code changes may break the system. | Gima requires backup, isolated copy, tests, diff review, rollback path, and release notes before sync. |
+
 ---
 
-## 11. Daily Improvement Loop
+## 12. Daily Improvement Loop
 
 Gima's improvement loop should produce a visible daily record across six tracks:
 
@@ -306,7 +372,7 @@ This turns "self-improvement" into engineering discipline instead of uncontrolle
 
 ---
 
-## 12. Legal Earning and AI Influencer Direction
+## 13. Legal Earning and AI Influencer Direction
 
 Gima can help the user earn legally by preparing assets, not by acting without approval.
 
@@ -331,7 +397,7 @@ Requires explicit user approval:
 
 ---
 
-## 13. Roadmap
+## 14. Roadmap
 
 | Phase | Priority | Outcome |
 |---|---:|---|
@@ -345,7 +411,7 @@ Requires explicit user approval:
 
 ---
 
-## 14. LinkedIn Summary
+## 15. LinkedIn Summary
 
 I am building **Gima**, a local-first AI workspace that combines private memory, web browsing, real artifact generation, optional cloud models, media planning, and safe self-improvement.
 
@@ -355,7 +421,7 @@ Gima is still experimental, but it is becoming a practical AI workspace for rese
 
 ---
 
-## 15. Conclusion
+## 16. Conclusion
 
 Gima's value is not one model. Its value is the system around the model:
 

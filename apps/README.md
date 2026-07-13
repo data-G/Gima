@@ -22,6 +22,12 @@ Gima is currently packaged as a free local web app/PWA. The same local server wo
 3. Open Chrome to the Mac network address and port `8787`.
 4. Tap Install app or Add to Home screen.
 
+## OpenRouter Terminal Agent
+
+`apps/gima-openrouter-agent` is a separate TypeScript terminal agent built with `@openrouter/agent`. It supports OpenRouter web search/datetime tools, read-only local repo tools, session logs, model switching, and a custom Gima status tool.
+
+Start it from that folder after exporting `OPENROUTER_API_KEY`.
+
 ## Notes
 
 - `127.0.0.1` only works on the Mac itself. Phones need the Mac LAN IP, for example `http://192.168.1.10:8787/`.

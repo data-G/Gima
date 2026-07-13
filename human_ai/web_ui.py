@@ -20,18 +20,27 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .agent import Agent
+from .agent_registry import AgentRegistry
 from .ai_task_map import AITaskMapStore
 from .artifacts import ChatArtifactEngine, _extract_weather_location
 from .brain import BrainServer
 from .brain_index import rebuild_brain_csv
 from .capabilities import CapabilityStore
 from .config import Config
+from .free_llm_planner import free_llm_plan
+from .huggingface_learning import HuggingFaceLearner, extract_huggingface_url
+from .local_ai_stack import local_ai_stack_payload
 from .memory import Record
+from .model_council import ModelCouncil
 from .model_levels import ModelLevelManager
+from .openrouter_paid_planner import paid_openrouter_plan
+from .openrouter_router import OpenRouterTaskRouter, RoutingRequest
+from .public_apis import PublicApiCatalogStore
 from .quota import FreeQuotaTracker
+from .readers import read_file
 from .secrets import save_teacher_secret, teacher_secret_status
 from .self_update import SelfUpdateManager
-from .services import AdvancedVideoSongRenderer, LipSyncPlanner, LocalImageMusicVideoRenderer, LocalMusicVideoDirector, LocalMusicVideoRenderer, LocalSongSketcher, NeuralLipSyncRenderer, OpenSourceVideoApiRenderer, SandboxedCodeRunner
+from .services import AdvancedVideoSongRenderer, ExternalMusicApiGenerator, HuggingFaceFeatureExtractor, HuggingFaceImageGenerator, HuggingFaceVideoGenerator, LipSyncPlanner, LocalImageMusicVideoRenderer, LocalMusicVideoDirector, LocalMusicVideoRenderer, LocalSongSketcher, NeuralLipSyncRenderer, OpenAIImageGenerator, OpenRouterCatalog, OpenRouterSpeechGenerator, OpenRouterVideoGenerator, OpenSourceVideoApiRenderer, SandboxedCodeRunner, TransformersTextGenerator, Voice, WhatsAppMessenger, cloud_allowed
 from .system_doctor import build_doctor_report, latest_ai_era_requirements_agent, latest_area_agent_supervisor, latest_daily_improvement_agent
 from .vibe_code import VibeCodingAgent
 
@@ -819,6 +828,59 @@ INDEX_HTML = """<!doctype html>
       background: rgba(255, 255, 255, 0.065);
       font-weight: 760;
     }
+    .route-preview {
+      display: inline-flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 7px;
+      min-height: 34px;
+      border-radius: 999px;
+      padding: 7px 12px;
+      color: var(--muted-2);
+      background: rgba(8, 12, 18, 0.74);
+      border: 1px solid rgba(177, 222, 255, 0.18);
+      font-size: 12px;
+      font-weight: 820;
+    }
+    .route-preview[hidden] { display: none; }
+    .route-preview strong { color: var(--text); }
+    .route-preview span {
+      border: 1px solid rgba(177, 222, 255, 0.22);
+      border-radius: 999px;
+      padding: 2px 7px;
+      color: #f8fbff;
+      background: rgba(155, 216, 255, 0.08);
+    }
+    .route-preview.local span:first-of-type {
+      border-color: rgba(130, 255, 202, 0.38);
+      background: rgba(130, 255, 202, 0.10);
+    }
+    .route-preview.cloud span:first-of-type {
+      border-color: rgba(155, 216, 255, 0.46);
+      background: rgba(155, 216, 255, 0.14);
+    }
+    .route-preview.blocked span:first-of-type {
+      border-color: rgba(255, 198, 120, 0.44);
+      background: rgba(255, 198, 120, 0.12);
+    }
+    .screen-record-button {
+      min-width: 58px;
+      height: 44px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: var(--text);
+      background: rgba(255, 255, 255, 0.055);
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 900;
+      letter-spacing: 0.02em;
+    }
+    .screen-record-button.recording {
+      color: #07111b;
+      border-color: rgba(255, 255, 255, 0.66);
+      background: linear-gradient(135deg, #ffffff, #bfe7ff 58%, #78c8ff);
+      box-shadow: 0 0 30px rgba(155, 216, 255, 0.34);
+    }
     .action-tray {
       width: min(100%, 980px);
       margin: 12px auto 0;
@@ -1341,6 +1403,255 @@ INDEX_HTML = """<!doctype html>
         right: 8px;
       }
     }
+
+    /* Gima glass black/white cloud-blue interface layer. Pure visual upgrade; app behavior stays unchanged. */
+    :root {
+      --bg: #030406;
+      --bg-soft: #080a0f;
+      --panel: rgba(8, 10, 15, 0.78);
+      --panel-2: rgba(12, 15, 22, 0.84);
+      --panel-3: rgba(18, 22, 31, 0.90);
+      --line: rgba(177, 222, 255, 0.24);
+      --line-soft: rgba(255, 255, 255, 0.13);
+      --text: #fbfdff;
+      --muted: #aab5c2;
+      --muted-2: #d7dee8;
+      --accent: #9bd8ff;
+      --accent-2: #f8fbff;
+      --accent-3: #6fb7ff;
+      --user: rgba(18, 24, 34, 0.86);
+      --assistant: rgba(7, 9, 14, 0.84);
+      --glow: 0 18px 52px rgba(132, 198, 255, 0.12), 0 0 90px rgba(255, 255, 255, 0.045);
+    }
+    body {
+      background:
+        radial-gradient(circle at 16% 8%, rgba(155, 216, 255, 0.18), transparent 27rem),
+        radial-gradient(circle at 82% 11%, rgba(255, 255, 255, 0.10), transparent 26rem),
+        radial-gradient(circle at 82% 78%, rgba(111, 183, 255, 0.10), transparent 24rem),
+        linear-gradient(135deg, #000000 0%, #050608 46%, #090b10 100%);
+    }
+    body::before,
+    body::after {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+    }
+    body::before {
+      z-index: 0;
+      opacity: 0.16;
+      background-image:
+        linear-gradient(rgba(190, 226, 255, 0.16) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(190, 226, 255, 0.16) 1px, transparent 1px);
+      background-size: 52px 52px;
+      mask-image: radial-gradient(circle at 55% 42%, black 0%, transparent 72%);
+    }
+    body::after {
+      z-index: 0;
+      opacity: 0.28;
+      background:
+        linear-gradient(115deg, transparent 0 32%, rgba(155, 216, 255, 0.10) 36%, transparent 41%),
+        linear-gradient(245deg, transparent 0 42%, rgba(255, 255, 255, 0.07) 46%, transparent 52%);
+      mix-blend-mode: screen;
+    }
+    .app,
+    .app.standard-shell {
+      position: relative;
+      z-index: 1;
+      background: transparent;
+    }
+    .standard-shell main,
+    main {
+      background:
+        radial-gradient(circle at 50% 28%, rgba(155, 216, 255, 0.08), transparent 26rem),
+        linear-gradient(180deg, rgba(10, 12, 18, 0.62), rgba(0, 0, 0, 0.96));
+    }
+    aside,
+    .workspace,
+    .standard-shell aside,
+    .standard-shell .workspace {
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.075), rgba(255, 255, 255, 0.018)),
+        rgba(5, 7, 11, 0.78);
+      border-color: rgba(177, 222, 255, 0.22);
+      box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.06), 0 24px 70px rgba(0, 0, 0, 0.36);
+      backdrop-filter: blur(26px) saturate(128%);
+    }
+    header,
+    .standard-shell .topbar {
+      background:
+        linear-gradient(90deg, rgba(0, 0, 0, 0.88), rgba(14, 18, 26, 0.76)),
+        rgba(0, 0, 0, 0.76);
+      border-bottom-color: rgba(177, 222, 255, 0.22);
+      box-shadow: 0 14px 44px rgba(0, 0, 0, 0.26);
+      backdrop-filter: blur(24px) saturate(126%);
+    }
+    .standard-shell h1,
+    h1 {
+      letter-spacing: -0.04em;
+      text-shadow: 0 0 24px rgba(155, 216, 255, 0.24);
+    }
+    .subtitle {
+      color: var(--muted);
+      letter-spacing: 0.01em;
+    }
+    .logo,
+    .avatar {
+      border: 1px solid rgba(177, 222, 255, 0.34);
+      box-shadow: 0 0 24px rgba(155, 216, 255, 0.20), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+    }
+    .logo {
+      border-radius: 16px;
+      background-color: rgba(155, 216, 255, 0.12);
+    }
+    .assistant .avatar {
+      background: radial-gradient(circle at 30% 20%, rgba(255, 255, 255, 0.38), rgba(155, 216, 255, 0.22) 46%, rgba(6, 8, 12, 0.92));
+    }
+    .card,
+    .standard-shell .card,
+    .bubble,
+    form,
+    .standard-shell form,
+    .add-sheet {
+      position: relative;
+      overflow: hidden;
+      border-color: rgba(177, 222, 255, 0.22);
+      background:
+        linear-gradient(145deg, rgba(255, 255, 255, 0.10), rgba(255, 255, 255, 0.025)),
+        rgba(5, 7, 11, 0.78);
+      box-shadow: 0 20px 70px rgba(0, 0, 0, 0.30), var(--glow);
+      backdrop-filter: blur(20px) saturate(120%);
+    }
+    .card::before,
+    .bubble::before,
+    form::before,
+    .add-sheet::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background:
+        linear-gradient(135deg, rgba(255, 255, 255, 0.10), transparent 33%),
+        linear-gradient(315deg, rgba(155, 216, 255, 0.11), transparent 42%);
+      opacity: 0.62;
+    }
+    .card > *,
+    .bubble > *,
+    form > *,
+    .add-sheet > * {
+      position: relative;
+      z-index: 1;
+    }
+    .card:hover,
+    .standard-shell .card:hover {
+      border-color: rgba(177, 222, 255, 0.42);
+      box-shadow: 0 24px 78px rgba(0, 0, 0, 0.46), 0 0 32px rgba(155, 216, 255, 0.16);
+    }
+    .user .bubble {
+      background:
+        linear-gradient(145deg, rgba(255, 255, 255, 0.075), rgba(155, 216, 255, 0.09)),
+        rgba(13, 18, 26, 0.88);
+      border-color: rgba(177, 222, 255, 0.30);
+    }
+    .composer {
+      background: linear-gradient(180deg, rgba(0, 0, 0, 0), rgba(5, 7, 11, 0.86) 24%, rgba(0, 0, 0, 0.97));
+    }
+    form,
+    .standard-shell form {
+      border-color: rgba(177, 222, 255, 0.34);
+      background:
+        linear-gradient(135deg, rgba(255, 255, 255, 0.085), rgba(155, 216, 255, 0.08)),
+        rgba(0, 0, 0, 0.74);
+    }
+    textarea,
+    .search input,
+    .tool-input,
+    .tool-select,
+    .tool-textarea {
+      color: var(--text);
+      background: rgba(0, 0, 0, 0.46);
+      border-color: rgba(177, 222, 255, 0.18);
+    }
+    textarea::placeholder,
+    .tool-input::placeholder,
+    .tool-textarea::placeholder {
+      color: rgba(215, 222, 232, 0.58);
+    }
+    .pill,
+    #chatStatus,
+    .model-chip,
+    .model-chip span {
+      border-color: rgba(177, 222, 255, 0.42);
+      color: #f8fbff;
+      background: linear-gradient(135deg, rgba(255, 255, 255, 0.11), rgba(155, 216, 255, 0.11));
+      box-shadow: 0 0 20px rgba(155, 216, 255, 0.11);
+    }
+    .tool-button,
+    .send {
+      color: #07111b;
+      border-color: rgba(255, 255, 255, 0.46);
+      background: linear-gradient(135deg, #ffffff, #bfe7ff 58%, #78c8ff);
+      box-shadow: 0 0 26px rgba(155, 216, 255, 0.26), 0 18px 38px rgba(0, 0, 0, 0.38);
+      font-weight: 850;
+    }
+    .attach-inline,
+    .screen-record-button,
+    .mini-button,
+    .quick button,
+    .search button,
+    .drawer-menu button,
+    .action-tray button,
+    .rail-button,
+    .icon-button,
+    .download-button,
+    .copy-button,
+    .standard-shell .action-tray button,
+    .standard-shell .quick button,
+    .standard-shell .search button,
+    .standard-shell .drawer-menu button {
+      border-color: rgba(177, 222, 255, 0.20);
+      color: var(--text);
+      background:
+        linear-gradient(135deg, rgba(255, 255, 255, 0.075), rgba(155, 216, 255, 0.06)),
+        rgba(7, 10, 15, 0.78);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 12px 28px rgba(0, 0, 0, 0.16);
+    }
+    .attach-inline:hover,
+    .screen-record-button:hover,
+    .mini-button:hover,
+    .quick button:hover,
+    .search button:hover,
+    .drawer-menu button:hover,
+    .action-tray button:hover,
+    .rail-button:hover,
+    .icon-button:hover,
+    .download-button:hover,
+    .copy-button:hover {
+      border-color: rgba(177, 222, 255, 0.48);
+      background:
+        linear-gradient(135deg, rgba(255, 255, 255, 0.12), rgba(155, 216, 255, 0.13)),
+        rgba(9, 13, 20, 0.90);
+      box-shadow: 0 0 22px rgba(155, 216, 255, 0.16), 0 14px 34px rgba(0, 0, 0, 0.32);
+    }
+    .section-label {
+      color: #eaf7ff;
+      letter-spacing: 0.16em;
+      text-shadow: 0 0 18px rgba(155, 216, 255, 0.22);
+    }
+    .bubble table {
+      border: 1px solid rgba(177, 222, 255, 0.20);
+      box-shadow: 0 0 26px rgba(155, 216, 255, 0.08);
+    }
+    .bubble th {
+      background: linear-gradient(135deg, rgba(255, 255, 255, 0.13), rgba(155, 216, 255, 0.13));
+      color: #f8fbff;
+    }
+    .terminal-output {
+      border-color: rgba(177, 222, 255, 0.26);
+      background: rgba(3, 5, 8, 0.90);
+      color: #dff2ff;
+      box-shadow: inset 0 0 28px rgba(155, 216, 255, 0.07);
+    }
   </style>
 </head>
 <body>
@@ -1361,7 +1672,7 @@ INDEX_HTML = """<!doctype html>
         <div class="logo" aria-label="Gima logo">G</div>
         <div>
           <h1>Gima</h1>
-          <p class="subtitle">soft gray local AI workspace</p>
+          <p class="subtitle">local-first AI command deck <span class="sr-only">soft gray local AI workspace</span></p>
         </div>
       </div>
       <div class="drawer-menu" aria-label="Gima drawer menu">
@@ -1375,6 +1686,9 @@ INDEX_HTML = """<!doctype html>
         <h2 style="font-size: 14px;">System</h2>
         <div class="status-row"><span>Brain</span><span class="pill" id="brain">checking</span></div>
         <div class="status-row"><span>Model</span><span id="model">...</span></div>
+        <select class="tool-select" id="localModelSelect" aria-label="Local model level"></select>
+        <button class="mini-button" id="localModelUseBtn" type="button">Use Local Model</button>
+        <div class="hint" id="localModelHint">Model levels loading...</div>
         <div class="status-row"><span>Memory</span><span id="memory">local</span></div>
         <div class="status-row"><span>Last response</span><span id="lastResponse">waiting</span></div>
         <div class="results" id="doctorMini">doctor checking...</div>
@@ -1385,19 +1699,58 @@ INDEX_HTML = """<!doctype html>
         <div id="bindingStatus" class="results">checking...</div>
         <div id="quotaStatus" class="results">free quota checking...</div>
         <div class="binding-grid">
+          <select class="tool-select" id="chatProvider">
+            <option value="local">Chat mode: Local brain + memory</option>
+            <option value="chatgpt">Chat mode: ChatGPT / OpenAI</option>
+            <option value="openrouter">Chat mode: OpenRouter</option>
+            <option value="anthropic">Chat mode: Claude / Anthropic</option>
+            <option value="gemini">Chat mode: Gemini</option>
+          </select>
           <select class="tool-select" id="apiProvider">
             <option value="openai">ChatGPT / OpenAI</option>
             <option value="gemini">Gemini</option>
             <option value="anthropic">Claude / Anthropic</option>
             <option value="xai">Grok / xAI</option>
             <option value="deepseek">DeepSeek</option>
-            <option value="openrouter">OpenRouter</option>
+            <option value="openrouter">OpenRouter Default / Chat</option>
+            <option value="openrouter_mai">OpenRouter MAI Speech</option>
+            <option value="openrouter_veo">OpenRouter Veo Video</option>
+            <option value="openrouter_image">OpenRouter GPT Image</option>
+            <option value="openrouter_nano_banana">OpenRouter Nano Banana</option>
+            <option value="openrouter_management">OpenRouter Management Key</option>
           </select>
           <input class="tool-input" id="apiKey" type="password" placeholder="Paste API key">
           <button class="tool-button" id="saveApiBtn">Save API Binding</button>
           <button class="mini-button" id="multiMindBtn" type="button">Ask All Linked Minds</button>
+          <input class="tool-input" id="openrouterModelSearch" type="search" placeholder="Search OpenRouter models">
+          <button class="mini-button" id="openrouterLoadModelsBtn" type="button">Load OpenRouter Models</button>
+          <select class="tool-select" id="openrouterModelSelect"></select>
+          <button class="mini-button" id="openrouterSaveModelBtn" type="button">Use Selected OpenRouter Model</button>
+          <select class="tool-select" id="openrouterRoutingSort">
+            <option value="latency">Route by latency</option>
+            <option value="throughput">Route by throughput</option>
+            <option value="price">Route by price</option>
+          </select>
+          <select class="tool-select" id="openrouterDataCollection">
+            <option value="deny">Deny provider data collection</option>
+            <option value="allow">Allow provider data collection</option>
+          </select>
+          <input class="tool-input" id="openrouterFallbackModels" placeholder="Fallback models, comma separated">
+          <button class="mini-button" id="openrouterSaveRoutingBtn" type="button">Save OpenRouter Routing</button>
+          <input class="tool-input" id="freeLlmTask" placeholder="Free LLM planner task: voice chat, long PDF, coding, batch summaries">
+          <select class="tool-select" id="freeLlmPrivacy">
+            <option value="balanced">Balanced privacy</option>
+            <option value="strict">Strict/private data</option>
+            <option value="open">Open/public data</option>
+          </select>
+          <button class="mini-button" id="freeLlmPlanBtn" type="button">Plan Free LLM Route</button>
+          <textarea class="tool-textarea" id="modelCouncilRequest" placeholder="Model council request: pick best model for voice chat, image OCR, local private coding, MAI speech, video prompt"></textarea>
+          <button class="mini-button" id="modelCouncilBtn" type="button">Ask Model Council</button>
         </div>
         <div class="tool-output" id="bindingOutput"></div>
+        <div class="tool-output" id="openrouterModelOutput"></div>
+        <div class="tool-output" id="freeLlmOutput"></div>
+        <div class="tool-output" id="modelCouncilOutput"></div>
       </div>
       <div class="card quick">
         <h2 style="font-size: 14px;">Quick Prompts</h2>
@@ -1433,8 +1786,8 @@ INDEX_HTML = """<!doctype html>
       <header class="topbar">
         <button class="icon-button" id="leftDrawerBtn" type="button" title="Open system controls">[]</button>
         <div>
-          <h1>Chat With Gima</h1>
-          <p class="subtitle">Local web UI. Conversations save to brain, conversation CSV, and continuous work logs.</p>
+          <h1>Gima Command Deck <span class="sr-only">Chat With Gima</span></h1>
+          <p class="subtitle">Local-first multimodal AI workspace with memory, tools, files, and guarded internet awareness.</p>
         </div>
         <button class="icon-button" id="rightDrawerBtn" type="button" title="Open tools">Tools</button>
       </header>
@@ -1455,6 +1808,8 @@ INDEX_HTML = """<!doctype html>
           <textarea id="message" placeholder="Type a message..." autofocus></textarea>
           <div class="composer-bottom">
             <button class="attach-inline" id="chatUploadBtn" type="button" title="Attach to chat">+</button>
+            <button class="screen-record-button" id="screenRecordBtn" type="button" title="Record screen and attach to chat">REC</button>
+            <span class="route-preview local" id="routePreviewChip" title="Gima route preview"><strong>route</strong> <span>local</span></span>
             <span class="model-chip" id="modelChip" hidden></span>
             <button class="send" id="send" type="submit" title="Send">^</button>
           </div>
@@ -1466,6 +1821,7 @@ INDEX_HTML = """<!doctype html>
           <button type="button" data-prompt="browse the web for latest AI news and give sources">Browse</button>
           <button type="button" data-prompt="Give me the next 5 best improvements for Gima.">Improve</button>
           <button type="button" data-action="attach">Attach</button>
+          <button type="button" data-action="screen-record">Screen Rec</button>
           <button type="button" data-open-panel="left" data-focus="search">Search</button>
           <button type="button" data-open-panel="left" data-focus="apiKey">AI APIs</button>
           <button type="button" data-open-panel="right" data-focus="songPrompt">Song</button>
@@ -1554,6 +1910,17 @@ INDEX_HTML = """<!doctype html>
         <div class="results" id="doctorPlanList">checking...</div>
       </div>
       <div class="card">
+        <h2 style="font-size: 14px;">Local AI Stack for This Laptop</h2>
+        <p class="hint">i7-7700HQ + 16GB RAM: unlimited local-first tools, model size limits, and download plan.</p>
+        <div class="results" id="localAiStackList">checking...</div>
+      </div>
+      <div class="card">
+        <h2 style="font-size: 14px;">Paid OpenRouter Model Plan</h2>
+        <p class="hint">Hybrid routing: local first, cheap paid second, premium only for hard tasks.</p>
+        <button class="mini-button" id="refreshPaidOpenRouterBtn" type="button">Refresh Paid Model Plan</button>
+        <div class="results" id="paidOpenRouterList">checking...</div>
+      </div>
+      <div class="card">
         <h2 style="font-size: 14px;">Apps & Automation</h2>
         <p class="hint">PWA now works as installable local app shell. Native Windows/macOS/iOS/Android packaging is tracked as capability work.</p>
         <div class="results" id="appPlanList">checking...</div>
@@ -1569,11 +1936,31 @@ INDEX_HTML = """<!doctype html>
         <div class="results" id="aiTaskMapList">checking...</div>
       </div>
       <div class="card">
+        <h2 style="font-size: 14px;">Public API Finder</h2>
+        <p class="hint">Search the MIT-licensed public-apis catalog. Discovery only: review docs before sending data.</p>
+        <input class="tool-input" id="publicApiQuery" placeholder="weather, finance, music, video, jobs">
+        <input class="tool-input" id="publicApiCategory" placeholder="Optional category">
+        <label class="status-row"><span>No-auth only</span><input id="publicApiNoAuth" type="checkbox" checked></label>
+        <label class="status-row"><span>HTTPS only</span><input id="publicApiHttps" type="checkbox" checked></label>
+        <button class="tool-button" id="publicApiBtn" type="button">Find APIs</button>
+        <div class="results" id="publicApiList">Search public APIs when needed.</div>
+      </div>
+      <div class="card">
         <h2 style="font-size: 14px;">Deployments</h2>
         <div class="results" id="deploymentList">checking...</div>
       </div>
       <div class="card">
         <h2 style="font-size: 14px;">Agents & Vibe Code</h2>
+        <p class="hint">Create review-gated task agents. Self-update agents prepare a backup and isolated working copy, not live edits.</p>
+        <input class="tool-input" id="agentName" placeholder="Agent name, e.g. Gima UI Updater">
+        <select class="tool-select" id="agentTemplate">
+          <option value="self_update">Safe Self-Update Agent</option>
+          <option value="research">Research Agent</option>
+          <option value="artifact">Artifact Agent</option>
+        </select>
+        <textarea class="tool-textarea" id="agentGoal" placeholder="Specific task, e.g. improve Gima route preview UI and run tests"></textarea>
+        <button class="tool-button" id="agentCreateBtn" type="button">Create Task Agent</button>
+        <div class="tool-output" id="agentCreateOutput"></div>
         <div class="results" id="agentList">checking...</div>
       </div>
       <div class="card">
@@ -1588,6 +1975,22 @@ INDEX_HTML = """<!doctype html>
         <div class="tool-output" id="songOutput"></div>
       </div>
       <div class="card">
+        <h2 style="font-size: 14px;">External Music API</h2>
+        <p class="hint">Cloud song generation. Requires CLOUD_ALLOWED=true, a provider key, and rights-safe lyrics/prompts.</p>
+        <select class="tool-select" id="musicApiProvider">
+          <option value="huggingface_musicgen">Open Source MusicGen / Hugging Face</option>
+          <option value="suno_compatible">Suno-compatible approved gateway</option>
+          <option value="waivepulse_local">WAIvePulse local HeartMuLa server</option>
+        </select>
+        <textarea class="tool-textarea" id="musicApiPrompt" placeholder="Example: cinematic Sinhala pop ballad, emotional male vocal, live stage energy"></textarea>
+        <textarea class="tool-textarea" id="musicApiLyrics" placeholder="Optional lyrics you own or have permission to use"></textarea>
+        <input class="tool-input" id="musicApiModel" placeholder="Optional provider model/version">
+        <input class="tool-input" id="musicApiDuration" type="number" min="4" max="600" value="30">
+        <label class="status-row"><span>Instrumental</span><input id="musicApiInstrumental" type="checkbox"></label>
+        <button class="tool-button" id="musicApiBtn">Generate API Song</button>
+        <div class="tool-output" id="musicApiOutput">Checking music API status...</div>
+      </div>
+      <div class="card">
         <h2 style="font-size: 14px;">Generate Video From Audio</h2>
         <input class="tool-input" id="videoAudioPath" placeholder="Audio path or uploaded file path">
         <textarea class="tool-textarea" id="videoPrompt" placeholder="Describe the video mood"></textarea>
@@ -1598,6 +2001,139 @@ INDEX_HTML = """<!doctype html>
         </select>
         <button class="tool-button" id="videoBtn">Render Local MP4</button>
         <div class="tool-output" id="videoOutput"></div>
+      </div>
+      <div class="card">
+        <h2 style="font-size: 14px;">AI Video From Prompt</h2>
+        <p class="hint">One prompt to video. Uses OpenRouter/Veo first or Hugging Face/Wan when configured. Requires CLOUD_ALLOWED=true and consent.</p>
+        <textarea class="tool-textarea" id="promptVideoPrompt" placeholder="A cinematic 8 second shot of a futuristic blue-glass AI command deck, slow dolly-in, soft light, realistic motion"></textarea>
+        <select class="tool-select" id="promptVideoProvider">
+          <option value="auto">Auto best available</option>
+          <option value="openrouter">OpenRouter / Veo</option>
+          <option value="huggingface">Hugging Face / Wan</option>
+        </select>
+        <select class="tool-select" id="promptVideoAspect">
+          <option value="16:9">16:9</option>
+          <option value="9:16">9:16</option>
+          <option value="1:1">1:1</option>
+        </select>
+        <input class="tool-input" id="promptVideoDuration" type="number" min="1" max="30" value="8">
+        <label class="status-row"><span>Generate audio</span><input id="promptVideoAudio" type="checkbox" checked></label>
+        <button class="tool-button" id="promptVideoBtn">Generate AI Video</button>
+        <div class="tool-output" id="promptVideoOutput"></div>
+      </div>
+      <div class="card">
+        <h2 style="font-size: 14px;">OpenRouter Veo Video</h2>
+        <p class="hint">Cloud video generation through OpenRouter. This can spend credits; use only rights-safe prompts and assets.</p>
+        <textarea class="tool-textarea" id="openrouterVideoPrompt" placeholder="Example: cinematic 8 second shot of a soft gray AI workspace, smooth camera move"></textarea>
+        <select class="tool-select" id="openrouterVideoModel">
+          <option value="google/veo-3.1">google/veo-3.1</option>
+          <option value="google/veo-3.1-lite">google/veo-3.1-lite</option>
+        </select>
+        <select class="tool-select" id="openrouterVideoAspect">
+          <option value="16:9">16:9</option>
+          <option value="9:16">9:16</option>
+          <option value="1:1">1:1</option>
+        </select>
+        <select class="tool-select" id="openrouterVideoResolution">
+          <option value="720p">720p</option>
+          <option value="1080p">1080p</option>
+        </select>
+        <input class="tool-input" id="openrouterVideoDuration" type="number" min="1" max="30" value="8">
+        <label class="status-row"><span>Generate audio</span><input id="openrouterVideoAudio" type="checkbox" checked></label>
+        <button class="tool-button" id="openrouterVideoBtn">Generate Veo Video</button>
+        <div class="tool-output" id="openrouterVideoOutput"></div>
+      </div>
+      <div class="card">
+        <h2 style="font-size: 14px;">Hugging Face Video</h2>
+        <p class="hint">Text-to-video through Hugging Face InferenceClient. Requires HF_TOKEN, CLOUD_ALLOWED=true, and consent.</p>
+        <textarea class="tool-textarea" id="hfVideoPrompt" placeholder="A young man walking on the street"></textarea>
+        <input class="tool-input" id="hfVideoModel" value="Wan-AI/Wan2.2-TI2V-5B">
+        <input class="tool-input" id="hfVideoProvider" value="replicate">
+        <button class="tool-button" id="hfVideoBtn">Generate HF Video</button>
+        <div class="tool-output" id="hfVideoOutput"></div>
+      </div>
+      <div class="card">
+        <h2 style="font-size: 14px;">Microsoft MAI Speech</h2>
+        <p class="hint">OpenRouter TTS through /api/v1/audio/speech. Requires CLOUD_ALLOWED=true, OpenRouter key, consent, and rights-safe text.</p>
+        <textarea class="tool-textarea" id="openrouterSpeechText" placeholder="Text for Gima to speak"></textarea>
+        <input class="tool-input" id="openrouterSpeechModel" value="microsoft/mai-voice-2">
+        <input class="tool-input" id="openrouterSpeechVoice" value="en-US-Harper:MAI-Voice-2">
+        <select class="tool-select" id="openrouterSpeechStyle">
+          <option value="cheerful">cheerful</option>
+          <option value="excited">excited</option>
+          <option value="sad">sad</option>
+          <option value="angry">angry</option>
+          <option value="calm">calm</option>
+        </select>
+        <input class="tool-input" id="openrouterSpeechSpeed" type="number" min="0.5" max="2" step="0.1" value="1">
+        <button class="tool-button" id="openrouterSpeechBtn">Generate MAI Speech MP3</button>
+        <div class="tool-output" id="openrouterSpeechOutput"></div>
+      </div>
+      <div class="card">
+        <h2 style="font-size: 14px;">My Voice Profile</h2>
+        <p class="hint">Register your own consented voice sample as Gima's personal voice reference. This stores a local profile; it does not claim voice cloning is available unless a real backend is connected.</p>
+        <input class="tool-input" id="ownVoiceName" value="Gimhan original voice 2" placeholder="Voice profile name">
+        <input class="tool-input" id="ownVoicePath" placeholder="Path to your MP3/WAV/M4A voice sample">
+        <label class="status-row"><span>This is my own voice</span><input id="ownVoiceConsent" type="checkbox"></label>
+        <button class="tool-button" id="ownVoiceBtn">Add My Voice</button>
+        <div class="tool-output" id="ownVoiceOutput">No personal voice profile loaded yet.</div>
+      </div>
+      <div class="card">
+        <h2 style="font-size: 14px;">ChatGPT Image Generation</h2>
+        <p class="hint">Uses the saved ChatGPT / OpenAI API key. Generates a PNG in hands/out with a provenance manifest.</p>
+        <textarea class="tool-textarea" id="openaiImagePrompt" placeholder="Example: professional Gima AI workspace logo, soft gray, cinematic lighting"></textarea>
+        <select class="tool-select" id="openaiImageModel">
+          <option value="gpt-image-2">gpt-image-2</option>
+          <option value="gpt-image-1">gpt-image-1</option>
+        </select>
+        <select class="tool-select" id="openaiImageSize">
+          <option value="1024x1024">1024x1024 Square</option>
+          <option value="1024x1536">1024x1536 Portrait</option>
+          <option value="1536x1024">1536x1024 Landscape</option>
+          <option value="auto">Auto</option>
+        </select>
+        <select class="tool-select" id="openaiImageQuality">
+          <option value="auto">Auto quality</option>
+          <option value="low">Low</option>
+          <option value="medium">Medium</option>
+          <option value="high">High</option>
+        </select>
+        <button class="tool-button" id="openaiImageBtn">Generate ChatGPT Image</button>
+        <div class="tool-output" id="openaiImageOutput"></div>
+      </div>
+      <div class="card">
+        <h2 style="font-size: 14px;">Hugging Face Image</h2>
+        <p class="hint">Text-to-image through Hugging Face InferenceClient. Requires HF_TOKEN, CLOUD_ALLOWED=true, and consent.</p>
+        <textarea class="tool-textarea" id="hfImagePrompt" placeholder="Astronaut riding a horse"></textarea>
+        <input class="tool-input" id="hfImageModel" value="black-forest-labs/FLUX.1-dev">
+        <input class="tool-input" id="hfImageProvider" value="wavespeed">
+        <button class="tool-button" id="hfImageBtn">Generate HF Image</button>
+        <div class="tool-output" id="hfImageOutput"></div>
+      </div>
+      <div class="card">
+        <h2 style="font-size: 14px;">Hugging Face Feature Extraction</h2>
+        <p class="hint">Creates feature vectors/embeddings for approved text. Requires HF_TOKEN, CLOUD_ALLOWED=true, and consent.</p>
+        <textarea class="tool-textarea" id="hfFeatureText" placeholder="Today is a sunny day and I will get some ice cream."></textarea>
+        <input class="tool-input" id="hfFeatureModel" value="microsoft/harrier-oss-v1-0.6b">
+        <input class="tool-input" id="hfFeatureProvider" value="hf-inference">
+        <button class="tool-button" id="hfFeatureBtn">Extract HF Features</button>
+        <div class="tool-output" id="hfFeatureOutput"></div>
+      </div>
+      <div class="card">
+        <h2 style="font-size: 14px;">Local Transformers Chat</h2>
+        <p class="hint">Run a local Hugging Face text-generation model such as Gemma. Keep local-files-only on to avoid downloads.</p>
+        <textarea class="tool-textarea" id="transformersPrompt" placeholder="Who are you? Please answer in pirate-speak."></textarea>
+        <input class="tool-input" id="transformersModel" value="google/gemma-2-2b-it">
+        <select class="tool-select" id="transformersDevice">
+          <option value="auto">Auto device</option>
+          <option value="mps">Mac MPS</option>
+          <option value="cpu">CPU</option>
+          <option value="cuda">CUDA</option>
+        </select>
+        <input class="tool-input" id="transformersMaxTokens" type="number" min="1" max="2048" value="256">
+        <label class="hint"><input type="checkbox" id="transformersLocalOnly" checked> local files only</label>
+        <button class="tool-button" id="transformersBtn">Run Local Transformers</button>
+        <div class="tool-output" id="transformersOutput"></div>
       </div>
       <div class="card">
         <h2 style="font-size: 14px;">Images + MP3 Video</h2>
@@ -1650,6 +2186,17 @@ INDEX_HTML = """<!doctype html>
         <div class="tool-output" id="directorOutput"></div>
       </div>
       <div class="card">
+        <h2 style="font-size: 14px;">WhatsApp Messenger</h2>
+        <p class="hint">Draft a WhatsApp message link locally, or send through the official WhatsApp Cloud API with consent.</p>
+        <input class="tool-input" id="whatsappTo" placeholder="Recipient phone, e.g. +94771234567">
+        <textarea class="tool-textarea" id="whatsappMessage" placeholder="Message to send"></textarea>
+        <button class="tool-button" id="whatsappDraftBtn">Create WhatsApp Draft</button>
+        <button class="tool-button" id="whatsappSendBtn">Send via WhatsApp API</button>
+        <input class="tool-input" id="whatsappSearchQuery" placeholder="Search saved WhatsApp messages">
+        <button class="tool-button" id="whatsappSearchBtn">Retrieve WhatsApp Items</button>
+        <div class="tool-output" id="whatsappOutput"></div>
+      </div>
+      <div class="card">
         <h2 style="font-size: 14px;">Neural Lip-Sync</h2>
         <div class="hint" id="lipBackendStatus">Checking local neural backend...</div>
         <input class="tool-input" id="lipAudioPath" placeholder="Audio path or uploaded MP3">
@@ -1692,6 +2239,7 @@ INDEX_HTML = """<!doctype html>
     const chatStatus = document.getElementById('chatStatus');
     const emptyState = document.getElementById('emptyState');
     const modelChip = document.getElementById('modelChip');
+    const routePreviewChip = document.getElementById('routePreviewChip');
     const drawerBackdrop = document.getElementById('drawerBackdrop');
     const leftDrawerBtn = document.getElementById('leftDrawerBtn');
     const rightDrawerBtn = document.getElementById('rightDrawerBtn');
@@ -1700,9 +2248,74 @@ INDEX_HTML = """<!doctype html>
     const enterSendSetting = document.getElementById('enterSendSetting');
     let pendingAttachments = [];
     let deferredInstallPrompt = null;
+    let screenRecorder = null;
+    let screenRecordStream = null;
+    let screenRecordChunks = [];
+    let routePreviewTimer = null;
+    let routePreviewController = null;
 
     function setChatStatus(text) {
       chatStatus.textContent = text;
+    }
+
+    function routeModeForChatProvider(provider) {
+      if (provider === 'local') return 'LOCAL_ONLY';
+      return 'CLOUD_ONLY';
+    }
+
+    function inferRoutePrivacy(text) {
+      return /api key|password|secret|private document/i.test(text || '') ? 'high' : 'normal';
+    }
+
+    function setRoutePreview(plan, provider = 'local') {
+      if (!routePreviewChip) return;
+      const routeProvider = plan?.provider || (provider === 'local' ? 'local' : provider);
+      const task = plan?.task_category || 'GENERAL_CHAT';
+      const model = plan?.model || (provider === 'local' ? 'local brain' : provider);
+      const cloudBlocked = provider !== 'local' && (routeProvider === 'local' || plan?.cloud_allowed === false);
+      routePreviewChip.hidden = false;
+      routePreviewChip.classList.toggle('local', routeProvider === 'local');
+      routePreviewChip.classList.toggle('cloud', routeProvider !== 'local');
+      routePreviewChip.classList.toggle('blocked', cloudBlocked);
+      routePreviewChip.innerHTML =
+        `<strong>route</strong> ` +
+        `<span>${escapeHtml(routeProvider)}</span>` +
+        `<span>${escapeHtml(task.replace(/_/g, ' ').toLowerCase())}</span>` +
+        `<span>${escapeHtml(modelLabel(model))}</span>` +
+        (cloudBlocked ? `<span>${plan?.cloud_allowed === false && routeProvider !== 'local' ? 'cloud off' : 'privacy local'}</span>` : '');
+    }
+
+    function scheduleRoutePreview() {
+      if (!routePreviewChip) return;
+      clearTimeout(routePreviewTimer);
+      routePreviewTimer = setTimeout(refreshRoutePreview, 260);
+    }
+
+    async function refreshRoutePreview() {
+      if (!routePreviewChip) return;
+      const text = message.value.trim();
+      const provider = document.getElementById('chatProvider')?.value || 'local';
+      if (!text) {
+        setRoutePreview({provider: provider === 'local' ? 'local' : provider, task_category: 'READY', model: provider === 'local' ? 'local brain' : provider}, provider);
+        return;
+      }
+      if (routePreviewController) routePreviewController.abort();
+      routePreviewController = new AbortController();
+      const params = new URLSearchParams({
+        message: text.slice(0, 4000),
+        mode: routeModeForChatProvider(provider),
+        privacy: inferRoutePrivacy(text),
+        has_images: pendingAttachments.some(file => /^image\\//i.test(file.type || '') || /\\.(png|jpe?g|webp|gif)$/i.test(file.name || file.path || '')) ? '1' : '0',
+      });
+      try {
+        const res = await fetch('/api/ai-router/plan?' + params.toString(), { signal: routePreviewController.signal });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const plan = await res.json();
+        setRoutePreview(plan, provider);
+      } catch (error) {
+        if (error.name === 'AbortError') return;
+        setRoutePreview({provider: provider === 'local' ? 'local' : provider, task_category: 'PREVIEW_OFFLINE', model: provider}, provider);
+      }
     }
 
     function addMessage(role, text, files = [], meta = {}) {
@@ -1897,6 +2510,7 @@ INDEX_HTML = """<!doctype html>
       const data = await res.json();
       document.getElementById('brain').textContent = data.brain.ready ? 'running' : (data.brain.running ? 'starting' : 'stopped');
       document.getElementById('model').textContent = modelLabel(data.model || data.brain?.models || '') || 'not configured';
+      renderLocalModelSelector(data);
       if (modelChip) modelChip.hidden = true;
       document.getElementById('memory').textContent = data.memory_rows + ' rows';
       document.getElementById('downloadsPath').textContent = data.downloads || '';
@@ -1906,6 +2520,26 @@ INDEX_HTML = """<!doctype html>
       document.getElementById('stomachPath').textContent = data.stomach || '';
       document.getElementById('continuousPath').textContent = data.continuous || '';
       document.getElementById('brainCsvPath').textContent = `${data.brain_csv || ''} (${data.brain_csv_rows || 0} rows)`;
+    }
+
+    function renderLocalModelSelector(data) {
+      const select = document.getElementById('localModelSelect');
+      const hint = document.getElementById('localModelHint');
+      if (!select || !hint) return;
+      const levels = data.model_levels || [];
+      select.innerHTML = levels.map(level => {
+        const status = level.level === data.active_model_level ? `active/${level.status || 'unknown'}` : (level.status || (level.available ? 'ready' : 'missing'));
+        const gemmaNote = level.level === 'gemma4_12b' && level.available ? ' — Gemma available' : '';
+        const label = `${level.name || level.level} — ${status}${gemmaNote}`;
+        return `<option value="${escapeHtml(level.level)}" ${level.available ? '' : 'disabled'}>${escapeHtml(label)}</option>`;
+      }).join('');
+      if (data.active_model_level) select.value = data.active_model_level;
+      const active = levels.find(level => level.level === data.active_model_level);
+      const gemma = levels.find(level => level.level === 'gemma4_12b');
+      hint.innerHTML =
+        `Active: <span class="pill">${escapeHtml(data.active_model_level || 'unknown')}</span>` +
+        (active ? `<br>${escapeHtml(active.description || '')}` : '') +
+        (gemma ? `<br>Gemma 4 12B: <span class="pill">${escapeHtml(gemma.status || (gemma.available ? 'ready' : 'missing'))}</span>` : '');
     }
 
     function modelChipHtml(model) {
@@ -1940,7 +2574,12 @@ INDEX_HTML = """<!doctype html>
       const quotaData = await quotaRes.json();
       const bindings = data.bindings || [];
       document.getElementById('bindingStatus').innerHTML = bindings.map(binding => {
-        const label = binding.available === 'yes' ? `linked (${escapeHtml(binding.masked)})` : 'not linked';
+        const state = binding.status || (binding.available === 'yes' ? 'linked' : 'missing');
+        const label = binding.available === 'yes'
+          ? `linked (${escapeHtml(binding.masked)})`
+          : state === 'invalid'
+            ? `invalid (${escapeHtml(binding.masked)})`
+            : 'not linked';
         return `<div class="status-row"><span>${escapeHtml(binding.provider)}</span><span class="pill">${label}</span></div>`;
       }).join('');
       document.getElementById('quotaStatus').innerHTML =
@@ -1950,24 +2589,70 @@ INDEX_HTML = """<!doctype html>
         ).join('');
     }
 
+    async function refreshOpenRouterModels(refresh = false) {
+      const search = document.getElementById('openrouterModelSearch').value.trim();
+      const params = new URLSearchParams({ output_modalities: 'all', limit: '300' });
+      if (search) params.set('q', search);
+      if (refresh) params.set('refresh', '1');
+      const [data, routing] = await Promise.all([
+        fetch('/api/openrouter/models?' + params.toString()).then(res => res.json()),
+        fetch('/api/openrouter/routing').then(res => res.json()),
+      ]);
+      if (data.error) {
+        setOutput('openrouterModelOutput', data);
+        return data;
+      }
+      if (!routing.error) {
+        document.getElementById('openrouterRoutingSort').value = routing.routing_sort || 'latency';
+        document.getElementById('openrouterDataCollection').value = routing.data_collection || 'deny';
+        document.getElementById('openrouterFallbackModels').value = (routing.fallback_models || []).join(', ');
+      }
+      const select = document.getElementById('openrouterModelSelect');
+      select.innerHTML = (data.models || []).map(model => {
+        const tags = [
+          model.free ? 'free' : '',
+          (model.output_modalities || []).join('+'),
+          model.context_length ? `${model.context_length} ctx` : '',
+        ].filter(Boolean).join(' · ');
+        const label = `${model.id}${model.name && model.name !== model.id ? ' — ' + model.name : ''}${tags ? ' — ' + tags : ''}`;
+        return `<option value="${escapeHtml(model.id)}">${escapeHtml(label)}</option>`;
+      }).join('');
+      if (data.selected_model) select.value = data.selected_model;
+      document.getElementById('openrouterModelOutput').innerHTML =
+        `<b>OpenRouter catalog:</b> ${escapeHtml(data.count)} matched, ${escapeHtml(data.returned)} shown from ${escapeHtml(data.source)}.` +
+        (data.selected_model ? `<br>Selected: <span class="pill">${escapeHtml(data.selected_model)}</span>` : '<br>No selected model yet.') +
+        (!routing.error ? `<br>Routing: <span class="pill">${escapeHtml(routing.routing_sort)}</span> · data collection ${escapeHtml(routing.data_collection)}` : '');
+      return data;
+    }
+
     async function refreshDashboards() {
-      const [capabilities, doctor, codexMode, aiTaskMap, deployments, agents, outputs, folders, apps, lipBackend] = await Promise.all([
+      const [capabilities, doctor, codexMode, aiTaskMap, localAiStack, paidOpenRouter, deployments, agents, outputs, folders, apps, lipBackend, musicApi] = await Promise.all([
         fetch('/api/capabilities').then(res => res.json()),
         fetch('/api/doctor').then(res => res.json()),
         fetch('/api/codex-mode').then(res => res.json()),
         fetch('/api/ai-task-map').then(res => res.json()),
+        fetch('/api/local-ai-stack').then(res => res.json()),
+        fetch('/api/openrouter/paid-plan').then(res => res.json()),
         fetch('/api/deployments').then(res => res.json()),
         fetch('/api/agents').then(res => res.json()),
         fetch('/api/outputs').then(res => res.json()),
         fetch('/api/folders').then(res => res.json()),
         fetch('/api/apps').then(res => res.json()),
         fetch('/api/media/lip-sync-status').then(res => res.json()),
+        fetch('/api/media/music-api-status').then(res => res.json()),
       ]);
       const lipStatus = document.getElementById('lipBackendStatus');
       if (lipStatus) {
         lipStatus.textContent = lipBackend.ready
           ? `SadTalker ready (${lipBackend.checkpoint_count} checkpoint)`
           : `Neural backend not ready: ${(lipBackend.missing || []).join(', ')}. Expected at ${lipBackend.backend_dir || ''}`;
+      }
+      const musicApiOutput = document.getElementById('musicApiOutput');
+      if (musicApiOutput && musicApi.providers) {
+        musicApiOutput.innerHTML = `<b>Cloud allowed:</b> ${musicApi.cloud_allowed ? 'yes' : 'no'}<br>` +
+          musicApi.providers.map(provider =>
+            `<span class="pill">${escapeHtml(provider.ready ? 'ready' : 'setup needed')}</span> ${escapeHtml(provider.label)}<br><span class="hint">${escapeHtml(provider.endpoint || provider.env.join(', '))}</span>`
+          ).join('<br>');
       }
       document.getElementById('folderMap').innerHTML = (folders.folders || []).map(item =>
         `<div class="folder-row"><b>${escapeHtml(item.name)}</b> <span class="pill">${escapeHtml(item.status)}</span><br>${escapeHtml(item.purpose)}<br><span class="hint">${escapeHtml(item.path)}</span></div>`
@@ -2001,6 +2686,15 @@ INDEX_HTML = """<!doctype html>
         ((doctor.legal_earning_plan || []).map(item =>
           `<div class="file-chip"><b>Legal offer: ${escapeHtml(item.offer)}</b><br>${escapeHtml(item.output)}<br><span class="hint">${escapeHtml(item.legal_check)}</span></div>`
         ).join('') || '') +
+        (doctor.master_ai_director_plan
+          ? `<div class="file-chip"><b>Master AI Director</b> <span class="pill">${escapeHtml(doctor.master_ai_director_plan.kind || 'director')}</span><br>${escapeHtml(doctor.master_ai_director_plan.hardware_reality || '')}<br><span class="hint">${escapeHtml(doctor.master_ai_director_plan.north_star || '')}</span></div>` +
+            ((doctor.master_ai_director_plan.routing_rules || []).map(item =>
+              `<div class="file-chip"><b>Route: ${escapeHtml(item.task)}</b><br>${escapeHtml(item.local_first)}<br><span class="hint">Cloud: ${escapeHtml(item.cloud_when)}<br>Output: ${escapeHtml(item.output)}</span></div>`
+            ).join('') || '') +
+            ((doctor.master_ai_director_plan.agent_roles || []).map(item =>
+              `<div class="file-chip"><b>Agent: ${escapeHtml(item.agent)}</b><br>${escapeHtml(item.job)}</div>`
+            ).join('') || '')
+          : '') +
         (doctor.own_model_plan
           ? `<div class="file-chip"><b>Own model path</b> <span class="pill">${escapeHtml(doctor.own_model_plan.status)}</span><br>${escapeHtml(doctor.own_model_plan.realistic_strategy)}<br><span class="hint">${escapeHtml(doctor.own_model_plan.why_not_from_scratch)}</span></div>` +
             ((doctor.own_model_plan.stages || []).map(item =>
@@ -2009,7 +2703,26 @@ INDEX_HTML = """<!doctype html>
           : '') +
         ((doctor.next_actions || []).length
           ? `<div class="file-chip"><b>Next fixes</b><br>${(doctor.next_actions || []).map(action => `- ${escapeHtml(action)}`).join('<br>')}</div>`
+          : '') +
+        ((doctor.criticism_defense_matrix || []).length
+          ? `<div class="file-chip"><b>Credibility and defense matrix</b><br>${(doctor.criticism_defense_matrix || []).map(row =>
+              `<b>${escapeHtml(row.criticism)}</b>: ${escapeHtml(row.defense)}<br><span class="hint">${escapeHtml(row.implementation)}</span>`
+            ).join('<br>')}</div>`
           : '');
+      const localFiles = localAiStack.files || {};
+      document.getElementById('localAiStackList').innerHTML =
+        `<div class="file-chip"><b>${escapeHtml(localAiStack.hardware?.cpu || '')}</b> <span class="pill">${escapeHtml(localAiStack.hardware?.ram_gb || 0)} GB RAM</span><br>${escapeHtml(localAiStack.hardware?.strategy || '')}</div>` +
+        ((localAiStack.tools || []).map(item =>
+          `<div class="file-chip"><b>${escapeHtml(item.area)}</b> <span class="pill">works: ${escapeHtml(item.works_on_laptop || item.fit)}</span><br>` +
+          `${escapeHtml(item.tool)} · ${escapeHtml(item.models)}<br>` +
+          `<span class="hint">Update: ${escapeHtml(item.update_possible || 'Yes')} · ${escapeHtml(item.notes)}</span></div>`
+        ).join('') || '') +
+        `<div class="file-chip"><b>Downloads</b><br>` +
+        (localFiles.csv ? `<a href="/api/download?path=${encodeURIComponent(localFiles.csv)}">CSV table</a><br>` : '') +
+        (localFiles.markdown ? `<a href="/api/download?path=${encodeURIComponent(localFiles.markdown)}">Markdown plan</a><br>` : '') +
+        (localFiles.json ? `<a href="/api/download?path=${encodeURIComponent(localFiles.json)}">JSON data</a>` : '') +
+        `</div>`;
+      renderPaidOpenRouterPlan(paidOpenRouter);
       document.getElementById('appPlanList').innerHTML = (apps.apps || []).map(item =>
         `<div class="file-chip"><b>${escapeHtml(item.name)}</b> <span class="pill">${escapeHtml(item.status)}</span><br>${escapeHtml(item.platforms)}<br><span class="hint">${escapeHtml(item.next)}</span></div>`
       ).join('') || '<div class="file-chip">No app plan yet.</div>';
@@ -2030,6 +2743,26 @@ INDEX_HTML = """<!doctype html>
       document.getElementById('outputList').innerHTML = (outputs.outputs || []).map(item =>
         renderFileCard({ path: item.path, name: item.name, label: item.kind || 'output', size: item.size_label || '' })
       ).join('') || '<div class="file-chip">No outputs yet.</div>';
+    }
+
+    function renderPaidOpenRouterPlan(data) {
+      const files = data.files || {};
+      const rows = data.recommendations || [];
+      document.getElementById('paidOpenRouterList').innerHTML =
+        `<div class="file-chip"><b>Catalog</b> <span class="pill">${escapeHtml(data.catalog_count || 0)} models</span><br>${escapeHtml(data.source || '')}<br><span class="hint">${escapeHtml((data.cost_controls || [])[0] || '')}</span></div>` +
+        rows.map(row =>
+          `<div class="file-chip"><b>${escapeHtml(row.area)}</b> <span class="pill">${escapeHtml(row.paid_model_type || 'paid model')}</span><br>` +
+          `Use: ${escapeHtml(row.need)}<br>` +
+          `First: ${escapeHtml(row.first_choice)}<br>` +
+          `Cheap: ${escapeHtml(row.cheap_choice)}<br>` +
+          `<span class="hint">Local: ${escapeHtml(row.local_fallback)}</span><br>` +
+          `<span class="hint">Note: ${escapeHtml(row.note || row.freshness_warning || '')}</span></div>`
+        ).join('') +
+        `<div class="file-chip"><b>Downloads</b><br>` +
+        (files.csv ? `<a href="/api/download?path=${encodeURIComponent(files.csv)}">CSV table</a><br>` : '') +
+        (files.markdown ? `<a href="/api/download?path=${encodeURIComponent(files.markdown)}">Markdown plan</a><br>` : '') +
+        (files.json ? `<a href="/api/download?path=${encodeURIComponent(files.json)}">JSON data</a>` : '') +
+        `</div>`;
     }
 
     async function apiPost(path, payload) {
@@ -2314,6 +3047,7 @@ INDEX_HTML = """<!doctype html>
       attachmentBar.innerHTML = pendingAttachments.length
         ? pendingAttachments.map(file => `<span class="attachment-pill"><span class="file-kind">${escapeHtml(fileKind(file.path || file.name))}</span>${escapeHtml(file.name || fileDisplayName(file.path))}</span>`).join('')
         : '';
+      scheduleRoutePreview();
     }
 
     async function uploadInputFiles(input) {
@@ -2327,6 +3061,77 @@ INDEX_HTML = """<!doctype html>
       await refreshStatus();
       await refreshDashboards();
       return data.files || [];
+    }
+
+    async function uploadRecordedScreen(blob) {
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const file = new File([blob], `gima-screen-recording-${stamp}.webm`, { type: blob.type || 'video/webm' });
+      const formData = new FormData();
+      formData.append('files', file);
+      const res = await fetch('/api/files/upload', { method: 'POST', body: formData });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      const files = data.files || [];
+      pendingAttachments = pendingAttachments.concat(files);
+      renderAttachments();
+      await refreshFiles();
+      await refreshStatus();
+      await refreshDashboards();
+      addMessage('assistant', `Screen recording saved and attached to your next prompt: ${file.name}`);
+    }
+
+    async function toggleScreenRecording() {
+      const button = document.getElementById('screenRecordBtn');
+      if (screenRecorder && screenRecorder.state === 'recording') {
+        screenRecorder.stop();
+        button.disabled = true;
+        button.textContent = 'SAVING';
+        setChatStatus('saving screen recording...');
+        return;
+      }
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia || typeof MediaRecorder === 'undefined') {
+        addMessage('assistant', 'Screen recording is not available in this browser. Use Chrome or another browser with getDisplayMedia and MediaRecorder support.');
+        return;
+      }
+      try {
+        screenRecordStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+        screenRecordChunks = [];
+        const options = MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')
+          ? { mimeType: 'video/webm;codecs=vp9,opus' }
+          : MediaRecorder.isTypeSupported('video/webm')
+            ? { mimeType: 'video/webm' }
+            : {};
+        screenRecorder = new MediaRecorder(screenRecordStream, options);
+        screenRecorder.ondataavailable = event => {
+          if (event.data && event.data.size > 0) screenRecordChunks.push(event.data);
+        };
+        screenRecorder.onstop = async () => {
+          const blob = new Blob(screenRecordChunks, { type: screenRecorder.mimeType || 'video/webm' });
+          screenRecordStream?.getTracks().forEach(track => track.stop());
+          screenRecordStream = null;
+          screenRecorder = null;
+          button.classList.remove('recording');
+          button.disabled = false;
+          button.textContent = 'REC';
+          try {
+            await uploadRecordedScreen(blob);
+            setChatStatus('screen recording attached');
+          } catch (error) {
+            addMessage('assistant', 'Screen recording save failed: ' + error);
+            setChatStatus('screen recording save failed');
+          }
+        };
+        screenRecordStream.getVideoTracks()[0]?.addEventListener('ended', () => {
+          if (screenRecorder && screenRecorder.state === 'recording') screenRecorder.stop();
+        });
+        screenRecorder.start();
+        button.classList.add('recording');
+        button.textContent = 'STOP';
+        setChatStatus('screen recording...');
+      } catch (error) {
+        addMessage('assistant', 'Screen recording was cancelled or blocked: ' + error);
+        setChatStatus('screen recording unavailable');
+      }
     }
 
     async function sendMessage(text) {
@@ -2361,12 +3166,14 @@ INDEX_HTML = """<!doctype html>
       try {
         let data;
         try {
-          data = await postChat({message: finalText}, 45000);
+          const chat_provider = document.getElementById('chatProvider')?.value || 'local';
+          data = await postChat({message: finalText, chat_provider}, 120000);
         } catch (error) {
           if (error.name !== 'AbortError') throw error;
-          pending.textContent = 'Gima took more than 45 seconds. Retrying with small AI...';
+          pending.textContent = 'Gima took more than 120 seconds. Retrying with small AI...';
           setChatStatus('retrying with small AI...');
-          data = await postChat({message: finalText, prefer_small_model: true}, 30000);
+          const chat_provider = document.getElementById('chatProvider')?.value || 'local';
+          data = await postChat({message: finalText, prefer_small_model: true, chat_provider}, 30000);
         }
         const elapsed = data.elapsed_seconds ?? ((performance.now() - requestStarted) / 1000).toFixed(2);
         updateAssistantMessage(pending, data.reply || data.error || 'No reply.', data.files || [], {
@@ -2381,7 +3188,7 @@ INDEX_HTML = """<!doctype html>
           renderAttachments();
         }
       } catch (error) {
-        const reason = error.name === 'AbortError' ? 'Gima did not answer within 45 seconds.' : String(error);
+        const reason = error.name === 'AbortError' ? 'Gima did not answer within 120 seconds.' : String(error);
         pending.textContent = 'Error: ' + reason + '\\nTry refreshing the page, then send again. Backend health is /api/status.';
         setChatStatus('chat error: ' + reason);
       } finally {
@@ -2404,7 +3211,11 @@ INDEX_HTML = """<!doctype html>
       message.style.height = 'auto';
       message.style.height = Math.min(message.scrollHeight, 180) + 'px';
     }
-    message.addEventListener('input', autoGrowMessage);
+    message.addEventListener('input', () => {
+      autoGrowMessage();
+      scheduleRoutePreview();
+    });
+    document.getElementById('chatProvider')?.addEventListener('change', scheduleRoutePreview);
     message.addEventListener('keydown', (event) => {
       if (event.key === 'Enter' && !event.shiftKey && enterSendSetting.checked) {
         event.preventDefault();
@@ -2444,6 +3255,10 @@ INDEX_HTML = """<!doctype html>
     });
     document.querySelectorAll('[data-action="attach"]').forEach(button => {
       button.addEventListener('click', openAddSheet);
+    });
+    document.getElementById('screenRecordBtn').addEventListener('click', toggleScreenRecording);
+    document.querySelectorAll('[data-action="screen-record"]').forEach(button => {
+      button.addEventListener('click', toggleScreenRecording);
     });
     document.querySelectorAll('[data-file-category]').forEach(button => {
       button.addEventListener('click', () => chooseFiles(button.dataset.accept || ''));
@@ -2542,12 +3357,223 @@ INDEX_HTML = """<!doctype html>
         document.getElementById('multiMindBtn').disabled = false;
       }
     });
+    document.getElementById('localModelUseBtn').addEventListener('click', async () => {
+      const level = document.getElementById('localModelSelect').value;
+      if (!level) return;
+      document.getElementById('localModelUseBtn').disabled = true;
+      setChatStatus(`switching local model to ${level}...`);
+      try {
+        const data = await apiPost('/api/model-level/use', { level, restart: true });
+        if (data.error) {
+          setChatStatus('model switch error: ' + data.error);
+        } else {
+          setChatStatus(`local model switched to ${data.active_level}${data.brain_restarted ? ' and brain restarted' : ''}`);
+          await refreshStatus();
+        }
+      } finally {
+        document.getElementById('localModelUseBtn').disabled = false;
+      }
+    });
+    document.getElementById('openrouterLoadModelsBtn').addEventListener('click', async () => {
+      document.getElementById('openrouterLoadModelsBtn').disabled = true;
+      try {
+        await refreshOpenRouterModels(true);
+      } catch (error) {
+        setOutput('openrouterModelOutput', 'OpenRouter model load error: ' + error);
+      } finally {
+        document.getElementById('openrouterLoadModelsBtn').disabled = false;
+      }
+    });
+    document.getElementById('openrouterSaveModelBtn').addEventListener('click', async () => {
+      const model = document.getElementById('openrouterModelSelect').value;
+      if (!model) {
+        setOutput('openrouterModelOutput', 'Load OpenRouter models first, then choose one.');
+        return;
+      }
+      document.getElementById('openrouterSaveModelBtn').disabled = true;
+      try {
+        const data = await apiPost('/api/openrouter/select', { model });
+        setOutput('openrouterModelOutput', data.error ? data : `Selected OpenRouter model: ${data.selected_model}`);
+      } finally {
+        document.getElementById('openrouterSaveModelBtn').disabled = false;
+      }
+    });
+    document.getElementById('openrouterSaveRoutingBtn').addEventListener('click', async () => {
+      const routing_sort = document.getElementById('openrouterRoutingSort').value;
+      const data_collection = document.getElementById('openrouterDataCollection').value;
+      const fallback_models = document.getElementById('openrouterFallbackModels').value;
+      document.getElementById('openrouterSaveRoutingBtn').disabled = true;
+      try {
+        const data = await apiPost('/api/openrouter/routing', { routing_sort, data_collection, fallback_models });
+        setOutput('openrouterModelOutput', data.error ? data : `Saved OpenRouter routing: ${data.routing_sort}, data collection ${data.data_collection}`);
+      } finally {
+        document.getElementById('openrouterSaveRoutingBtn').disabled = false;
+      }
+    });
+    document.getElementById('freeLlmPlanBtn').addEventListener('click', async () => {
+      const task = document.getElementById('freeLlmTask').value.trim();
+      const privacy = document.getElementById('freeLlmPrivacy').value;
+      const params = new URLSearchParams({ task, privacy, limit: '6' });
+      document.getElementById('freeLlmPlanBtn').disabled = true;
+      try {
+        const data = await fetch('/api/free-llm-plan?' + params.toString()).then(res => res.json());
+        const rows = data.recommendations || [];
+        document.getElementById('freeLlmOutput').innerHTML =
+          `<b>Free LLM route plan</b><br><span class="hint">${escapeHtml(data.source || '')}</span>` +
+          rows.map(row =>
+            `<div class="file-chip"><b>${escapeHtml(row.name)}</b> <span class="pill">score ${escapeHtml(row.score)}</span><br>` +
+            `${escapeHtml(row.free_models)}<br>` +
+            `<span class="hint">RPM ${escapeHtml(row.rpm)} · limit ${escapeHtml(row.daily_limit)} · context ${escapeHtml(row.context_window)} · training ${escapeHtml(row.data_training)}</span><br>` +
+            `${(row.reasons || []).map(reason => `- ${escapeHtml(reason)}`).join('<br>')}</div>`
+          ).join('') +
+          `<div class="file-chip"><b>Rules</b><br>${(data.rules || []).map(rule => `- ${escapeHtml(rule)}`).join('<br>')}</div>`;
+      } finally {
+        document.getElementById('freeLlmPlanBtn').disabled = false;
+      }
+    });
+    document.getElementById('modelCouncilBtn').addEventListener('click', async () => {
+      const request = document.getElementById('modelCouncilRequest').value.trim();
+      const params = new URLSearchParams({ request, limit: '8' });
+      document.getElementById('modelCouncilBtn').disabled = true;
+      try {
+        const data = await fetch('/api/model-council?' + params.toString()).then(res => res.json());
+        const rows = data.recommendations || [];
+        document.getElementById('modelCouncilOutput').innerHTML =
+          `<b>Winner:</b> ${escapeHtml(data.winner?.name || '')} <span class="pill">score ${escapeHtml(data.winner?.score || 0)}</span><br>` +
+          `<span class="hint">${escapeHtml(data.winner?.model || '')}</span>` +
+          rows.map(row =>
+            `<div class="file-chip"><b>${escapeHtml(row.name)}</b> <span class="pill">${escapeHtml(row.provider)}</span> <span class="pill">score ${escapeHtml(row.score)}</span><br>` +
+            `${escapeHtml(row.model)}<br><span class="hint">${escapeHtml(row.status)} · ${escapeHtml((row.modality || []).join(', '))}</span><br>` +
+            `${(row.reasons || []).map(reason => `- ${escapeHtml(reason)}`).join('<br>')}</div>`
+          ).join('') +
+          `<div class="file-chip"><b>Interaction plan</b><br>${(data.interaction_plan || []).map(step => escapeHtml(step)).join('<br>')}</div>`;
+      } finally {
+        document.getElementById('modelCouncilBtn').disabled = false;
+      }
+    });
+    document.getElementById('publicApiBtn').addEventListener('click', async () => {
+      const query = document.getElementById('publicApiQuery').value.trim();
+      const category = document.getElementById('publicApiCategory').value.trim();
+      const no_auth = document.getElementById('publicApiNoAuth').checked ? '1' : '0';
+      const https = document.getElementById('publicApiHttps').checked ? '1' : '0';
+      const params = new URLSearchParams({ q: query, category, no_auth, https, limit: '25' });
+      document.getElementById('publicApiBtn').disabled = true;
+      try {
+        const data = await fetch('/api/public-apis?' + params.toString()).then(res => res.json());
+        const box = document.getElementById('publicApiList');
+        if (data.error) {
+          box.textContent = 'Error: ' + data.error;
+        } else {
+          box.innerHTML = `<div class="file-chip"><b>${escapeHtml(data.count)} APIs matched</b> <span class="pill">${escapeHtml(data.license)}</span><br><span class="hint">${escapeHtml(data.source)}</span></div>` +
+            (data.entries || []).map(api =>
+              `<div class="file-chip"><b><a href="${escapeHtml(api.url)}" target="_blank" rel="noreferrer">${escapeHtml(api.name)}</a></b> <span class="pill">${escapeHtml(api.category)}</span><br>${escapeHtml(api.description)}<br><span class="hint">Auth: ${escapeHtml(api.auth)} · HTTPS: ${escapeHtml(api.https)} · CORS: ${escapeHtml(api.cors)}</span></div>`
+            ).join('');
+        }
+      } finally {
+        document.getElementById('publicApiBtn').disabled = false;
+      }
+    });
+    document.getElementById('refreshPaidOpenRouterBtn').addEventListener('click', async () => {
+      document.getElementById('refreshPaidOpenRouterBtn').disabled = true;
+      try {
+        const data = await fetch('/api/openrouter/paid-plan?refresh=1').then(res => res.json());
+        renderPaidOpenRouterPlan(data);
+      } catch (error) {
+        setOutput('paidOpenRouterList', 'Paid OpenRouter plan refresh error: ' + error);
+      } finally {
+        document.getElementById('refreshPaidOpenRouterBtn').disabled = false;
+      }
+    });
     document.getElementById('songBtn').addEventListener('click', async () => {
       const prompt = document.getElementById('songPrompt').value.trim();
       const duration = Number(document.getElementById('songDuration').value || 12);
       if (!prompt) return;
       await runWithProgress('songBtn', 'songOutput', 'Generating song sketch', Math.max(8, duration), () =>
         apiPost('/api/media/song-local', { prompt, duration_seconds: duration })
+      );
+    });
+    document.getElementById('musicApiBtn').addEventListener('click', async () => {
+      const provider = document.getElementById('musicApiProvider').value;
+      const prompt = document.getElementById('musicApiPrompt').value.trim();
+      const lyrics = document.getElementById('musicApiLyrics').value;
+      const model = document.getElementById('musicApiModel').value.trim();
+      const duration_seconds = Number(document.getElementById('musicApiDuration').value || 30);
+      const instrumental = document.getElementById('musicApiInstrumental').checked;
+      if (!prompt) return;
+      if (!window.confirm('External music APIs can send your prompt/lyrics to cloud providers and may spend credits. Continue?')) return;
+      await runWithProgress('musicApiBtn', 'musicApiOutput', 'Generating API song', Math.max(45, duration_seconds * 6), () =>
+        apiPost('/api/media/music-api-generate', { provider, prompt, lyrics, model, duration_seconds, instrumental, timeout_seconds: 600, consent: true })
+      );
+    });
+    document.getElementById('ownVoiceBtn').addEventListener('click', async () => {
+      const profile_name = document.getElementById('ownVoiceName').value.trim() || 'My original voice';
+      const audio_path = document.getElementById('ownVoicePath').value.trim();
+      const consent = document.getElementById('ownVoiceConsent').checked;
+      if (!audio_path) {
+        setOutput('ownVoiceOutput', 'Paste the path to your own MP3/WAV/M4A voice sample first.');
+        return;
+      }
+      document.getElementById('ownVoiceBtn').disabled = true;
+      try {
+        const data = await apiPost('/api/voice-profile/save', { profile_name, audio_path, consent });
+        setOutput('ownVoiceOutput', data.error ? data : `Saved voice profile: ${data.profile_name}\\nSample: ${data.sample_path}\\nManifest: ${data.manifest_path}`);
+        await refreshStatus();
+      } finally {
+        document.getElementById('ownVoiceBtn').disabled = false;
+      }
+    });
+    document.getElementById('openaiImageBtn').addEventListener('click', async () => {
+      const prompt = document.getElementById('openaiImagePrompt').value.trim();
+      const model = document.getElementById('openaiImageModel').value;
+      const size = document.getElementById('openaiImageSize').value;
+      const quality = document.getElementById('openaiImageQuality').value;
+      if (!prompt) return;
+      await runWithProgress('openaiImageBtn', 'openaiImageOutput', 'Generating ChatGPT image', 30, () =>
+        apiPost('/api/media/openai-image-generate', { prompt, model, size, quality, consent: true })
+      );
+    });
+    document.getElementById('hfImageBtn').addEventListener('click', async () => {
+      const prompt = document.getElementById('hfImagePrompt').value.trim();
+      const model = document.getElementById('hfImageModel').value.trim() || 'black-forest-labs/FLUX.1-dev';
+      const provider = document.getElementById('hfImageProvider').value.trim() || 'wavespeed';
+      if (!prompt) {
+        setOutput('hfImageOutput', 'Add an image prompt first.');
+        return;
+      }
+      if (!window.confirm('Hugging Face text-to-image can spend credits through the selected provider. Continue?')) return;
+      await runWithProgress('hfImageBtn', 'hfImageOutput', 'Generating Hugging Face image', 120, () =>
+        apiPost('/api/media/huggingface-image-generate', { prompt, model, provider, consent: true })
+      );
+    });
+    document.getElementById('hfFeatureBtn').addEventListener('click', async () => {
+      const text = document.getElementById('hfFeatureText').value.trim();
+      const model = document.getElementById('hfFeatureModel').value.trim() || 'microsoft/harrier-oss-v1-0.6b';
+      const provider = document.getElementById('hfFeatureProvider').value.trim() || 'hf-inference';
+      if (!text) {
+        setOutput('hfFeatureOutput', 'Add text to extract features from first.');
+        return;
+      }
+      if (!window.confirm('Hugging Face feature extraction sends this text to the selected provider and can spend credits. Continue?')) return;
+      await runWithProgress('hfFeatureBtn', 'hfFeatureOutput', 'Extracting Hugging Face features', 60, () =>
+        apiPost('/api/ai/huggingface-feature-extract', { text, model, provider, consent: true })
+      );
+    });
+    document.getElementById('transformersBtn').addEventListener('click', async () => {
+      const prompt = document.getElementById('transformersPrompt').value.trim();
+      const model = document.getElementById('transformersModel').value.trim() || 'google/gemma-2-2b-it';
+      const device = document.getElementById('transformersDevice').value || 'auto';
+      const max_new_tokens = Number(document.getElementById('transformersMaxTokens').value || 256);
+      const local_files_only = document.getElementById('transformersLocalOnly').checked;
+      if (!prompt) {
+        setOutput('transformersOutput', 'Add a local model prompt first.');
+        return;
+      }
+      const note = local_files_only
+        ? 'Gima will only use model files already cached locally. Continue?'
+        : 'Transformers may download large model files from Hugging Face. Continue?';
+      if (!window.confirm(note)) return;
+      await runWithProgress('transformersBtn', 'transformersOutput', 'Running local Transformers model', 180, () =>
+        apiPost('/api/local/transformers-generate', { prompt, model, device, max_new_tokens, local_files_only, consent: true })
       );
     });
     document.getElementById('videoBtn').addEventListener('click', async () => {
@@ -2557,6 +3583,62 @@ INDEX_HTML = """<!doctype html>
       if (!audio_path || !prompt) return;
       await runWithProgress('videoBtn', 'videoOutput', 'Rendering video', 30, () =>
         apiPost('/api/media/music-video-local', { audio_path, prompt, style, consent: true })
+      );
+    });
+    document.getElementById('promptVideoBtn').addEventListener('click', async () => {
+      const prompt = document.getElementById('promptVideoPrompt').value.trim();
+      const provider = document.getElementById('promptVideoProvider').value;
+      const aspect_ratio = document.getElementById('promptVideoAspect').value;
+      const duration = Number(document.getElementById('promptVideoDuration').value || 8);
+      const generate_audio = document.getElementById('promptVideoAudio').checked;
+      if (!prompt) {
+        setOutput('promptVideoOutput', 'Add a video prompt first.');
+        return;
+      }
+      if (!window.confirm('AI video generation can spend cloud credits. Continue?')) return;
+      await runWithProgress('promptVideoBtn', 'promptVideoOutput', 'Generating AI video from prompt', Math.max(90, duration * 45), () =>
+        apiPost('/api/media/prompt-video-generate', { prompt, provider, aspect_ratio, duration, generate_audio, consent: true, timeout_seconds: 1200 })
+      );
+    });
+    document.getElementById('openrouterVideoBtn').addEventListener('click', async () => {
+      const prompt = document.getElementById('openrouterVideoPrompt').value.trim();
+      const model = document.getElementById('openrouterVideoModel').value;
+      const aspect_ratio = document.getElementById('openrouterVideoAspect').value;
+      const resolution = document.getElementById('openrouterVideoResolution').value;
+      const duration = Number(document.getElementById('openrouterVideoDuration').value || 8);
+      const generate_audio = document.getElementById('openrouterVideoAudio').checked;
+      if (!prompt) return;
+      if (!window.confirm('OpenRouter/Veo cloud video can spend credits. Continue?')) return;
+      await runWithProgress('openrouterVideoBtn', 'openrouterVideoOutput', 'Generating OpenRouter Veo video', Math.max(90, duration * 45), () =>
+        apiPost('/api/media/openrouter-video-generate', { prompt, model, aspect_ratio, resolution, duration, generate_audio, timeout_seconds: 1200, consent: true })
+      );
+    });
+    document.getElementById('hfVideoBtn').addEventListener('click', async () => {
+      const prompt = document.getElementById('hfVideoPrompt').value.trim();
+      const model = document.getElementById('hfVideoModel').value.trim() || 'Wan-AI/Wan2.2-TI2V-5B';
+      const provider = document.getElementById('hfVideoProvider').value.trim() || 'replicate';
+      if (!prompt) {
+        setOutput('hfVideoOutput', 'Add a video prompt first.');
+        return;
+      }
+      if (!window.confirm('Hugging Face text-to-video can spend credits through the selected provider. Continue?')) return;
+      await runWithProgress('hfVideoBtn', 'hfVideoOutput', 'Generating Hugging Face video', 240, () =>
+        apiPost('/api/media/huggingface-video-generate', { prompt, model, provider, timeout_seconds: 1200, consent: true })
+      );
+    });
+    document.getElementById('openrouterSpeechBtn').addEventListener('click', async () => {
+      const text = document.getElementById('openrouterSpeechText').value.trim();
+      const model = document.getElementById('openrouterSpeechModel').value.trim() || 'microsoft/mai-voice-2';
+      const voice = document.getElementById('openrouterSpeechVoice').value.trim() || 'en-US-Harper:MAI-Voice-2';
+      const style = document.getElementById('openrouterSpeechStyle').value;
+      const speed = Number(document.getElementById('openrouterSpeechSpeed').value || 1);
+      if (!text) {
+        setOutput('openrouterSpeechOutput', 'Add text to speak first.');
+        return;
+      }
+      if (!window.confirm('OpenRouter speech generation can spend credits. Continue?')) return;
+      await runWithProgress('openrouterSpeechBtn', 'openrouterSpeechOutput', 'Generating Microsoft MAI speech', 90, () =>
+        apiPost('/api/media/openrouter-speech-generate', { text, model, voice, style, speed, response_format: 'mp3', consent: true })
       );
     });
     document.getElementById('imageVideoBtn').addEventListener('click', async () => {
@@ -2595,6 +3677,36 @@ INDEX_HTML = """<!doctype html>
         apiPost('/api/media/music-video-director', { audio_path, prompt, mode, style, aspect, lyrics })
       );
     });
+    document.getElementById('whatsappDraftBtn').addEventListener('click', async () => {
+      const to = document.getElementById('whatsappTo').value.trim();
+      const message = document.getElementById('whatsappMessage').value.trim();
+      if (!to || !message) {
+        setOutput('whatsappOutput', 'Add a recipient phone number and message first.');
+        return;
+      }
+      const data = await apiPost('/api/whatsapp/draft', { to, message });
+      setOutput('whatsappOutput', data.error ? data : `WhatsApp draft ready:\\n${data.wa_me_link}\\nManifest: ${data.manifest}`);
+      if (data.wa_me_link) window.open(data.wa_me_link, '_blank', 'noopener');
+    });
+    document.getElementById('whatsappSendBtn').addEventListener('click', async () => {
+      const to = document.getElementById('whatsappTo').value.trim();
+      const message = document.getElementById('whatsappMessage').value.trim();
+      if (!to || !message) {
+        setOutput('whatsappOutput', 'Add a recipient phone number and message first.');
+        return;
+      }
+      if (!window.confirm('Send this message using the official WhatsApp Cloud API? Use only for expected, permissioned messages.')) return;
+      await runWithProgress('whatsappSendBtn', 'whatsappOutput', 'Sending WhatsApp message', 30, () =>
+        apiPost('/api/whatsapp/send', { to, message, consent: true })
+      );
+    });
+    document.getElementById('whatsappSearchBtn').addEventListener('click', async () => {
+      const query = document.getElementById('whatsappSearchQuery').value.trim();
+      const params = new URLSearchParams({ query, limit: '20' });
+      const response = await fetch('/api/whatsapp/messages?' + params.toString());
+      const data = await response.json();
+      setOutput('whatsappOutput', data.error ? data : data);
+    });
     document.getElementById('lipBtn').addEventListener('click', async () => {
       const audio_path = document.getElementById('lipAudioPath').value.trim();
       const face_path = document.getElementById('lipFacePath').value.trim();
@@ -2630,6 +3742,19 @@ INDEX_HTML = """<!doctype html>
         apiPost('/api/code/self-code', { feature, max_files: 8, timeout_seconds: 900, confirm: true })
       );
     });
+    document.getElementById('agentCreateBtn').addEventListener('click', async () => {
+      const name = document.getElementById('agentName').value.trim();
+      const template = document.getElementById('agentTemplate').value;
+      const goal = document.getElementById('agentGoal').value.trim();
+      if (!goal) {
+        setOutput('agentCreateOutput', 'Add a specific task for the agent first.');
+        return;
+      }
+      await runWithProgress('agentCreateBtn', 'agentCreateOutput', 'Creating review-gated task agent', 20, () =>
+        apiPost('/api/agents/create', { name, template, goal })
+      );
+      await refreshDashboards();
+    });
     document.getElementById('runCodeBtn').addEventListener('click', async () => {
       const language = document.getElementById('codeLanguage').value;
       const code = document.getElementById('codeEditor').value;
@@ -2642,6 +3767,7 @@ INDEX_HTML = """<!doctype html>
     refreshBindings().catch(error => setChatStatus('binding error: ' + error));
     refreshDashboards().catch(error => setChatStatus('dashboard error: ' + error));
     refreshFiles().catch(error => setChatStatus('file list error: ' + error));
+    refreshRoutePreview().catch(() => {});
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('/service-worker.js').then(registration => registration.update()).catch(() => {});
     }
@@ -2818,10 +3944,43 @@ def _handler_factory(config: Config, agent: Agent, brain: BrainServer) -> type[B
                 )
             elif parsed.path == "/api/files":
                 self._send_json({"files": _list_uploaded_files(config)})
+            elif parsed.path == "/api/openrouter/models":
+                params = urllib.parse.parse_qs(parsed.query)
+                refresh = params.get("refresh", ["0"])[0] in {"1", "true", "yes"}
+                output_modalities = params.get("output_modalities", ["all"])[0]
+                limit = _safe_int(params.get("limit", ["500"])[0], 500)
+                query = params.get("q", [""])[0]
+                try:
+                    self._send_json(
+                        OpenRouterCatalog(config).models(
+                            refresh=refresh,
+                            output_modalities=output_modalities,
+                            limit=max(1, min(limit, 1000)),
+                            query=query,
+                        )
+                    )
+                except Exception as error:
+                    self._send_json({"error": str(error)}, HTTPStatus.BAD_GATEWAY)
+            elif parsed.path == "/api/openrouter/routing":
+                self._send_json(OpenRouterCatalog(config).routing_config())
+            elif parsed.path == "/api/openrouter/paid-plan":
+                params = urllib.parse.parse_qs(parsed.query)
+                refresh = params.get("refresh", ["0"])[0] in {"1", "true", "yes"}
+                self._send_json(paid_openrouter_plan(config, refresh=refresh))
+            elif parsed.path == "/api/ai-router/plan":
+                self._send_json(_ai_router_plan(config, urllib.parse.parse_qs(parsed.query)))
             elif parsed.path == "/api/bindings":
                 self._send_json({"bindings": teacher_secret_status(config.resolved_workspace)})
             elif parsed.path == "/api/free-quotas":
                 self._send_json(_free_quota_payload(config))
+            elif parsed.path == "/api/free-llm-plan":
+                self._send_json(_free_llm_plan_payload(parsed))
+            elif parsed.path == "/api/model-council":
+                params = urllib.parse.parse_qs(parsed.query)
+                request = params.get("request", [""])[0]
+                limit = _safe_int(params.get("limit", ["8"])[0], 8)
+                attachments = params.get("attachment", [])
+                self._send_json(ModelCouncil(config).plan(request, attachments=attachments, limit=max(1, min(limit, 20))))
             elif parsed.path == "/api/capabilities":
                 self._send_json({"capabilities": _capability_payload(config, agent, brain)})
             elif parsed.path == "/api/doctor":
@@ -2830,10 +3989,14 @@ def _handler_factory(config: Config, agent: Agent, brain: BrainServer) -> type[B
                 self._send_json({"capabilities": _codex_mode_payload(config, brain)})
             elif parsed.path == "/api/ai-task-map":
                 self._send_json(_ai_task_map_payload(config))
+            elif parsed.path == "/api/local-ai-stack":
+                self._send_json(local_ai_stack_payload(config))
+            elif parsed.path == "/api/public-apis":
+                self._send_json(_public_apis_payload(config, parsed))
             elif parsed.path == "/api/deployments":
                 self._send_json({"deployments": _deployment_payload(config, brain)})
             elif parsed.path == "/api/agents":
-                self._send_json({"agents": _agent_payload(config)})
+                self._send_json({"agents": _agent_payload(config), "templates": AgentRegistry(config).templates()})
             elif parsed.path == "/api/outputs":
                 self._send_json({"outputs": _output_payload(config)})
             elif parsed.path == "/api/folders":
@@ -2842,10 +4005,34 @@ def _handler_factory(config: Config, agent: Agent, brain: BrainServer) -> type[B
                 self._send_json({"apps": _app_plan_payload(config)})
             elif parsed.path == "/api/media/lip-sync-status":
                 self._send_json(_lip_sync_renderer(config).status())
+            elif parsed.path == "/api/media/music-api-status":
+                self._send_json(ExternalMusicApiGenerator(_hands_out_dir(config) / "external_music").status())
             elif parsed.path == "/api/media/open-video-api-status":
                 params = urllib.parse.parse_qs(parsed.query)
                 base_url = params.get("base_url", [os.environ.get("GIMA_COMFYUI_URL", "http://127.0.0.1:8188")])[0]
                 self._send_json(OpenSourceVideoApiRenderer(_hands_out_dir(config) / "open_video_api", base_url=base_url).status())
+            elif parsed.path == "/api/media/prompt-video-status":
+                self._send_json(_prompt_video_status())
+            elif parsed.path == "/api/media/huggingface-video-status":
+                self._send_json(HuggingFaceVideoGenerator(_hands_out_dir(config) / "huggingface_video").status())
+            elif parsed.path == "/api/media/huggingface-image-status":
+                self._send_json(HuggingFaceImageGenerator(_hands_out_dir(config) / "huggingface_images").status())
+            elif parsed.path == "/api/ai/huggingface-feature-status":
+                self._send_json(HuggingFaceFeatureExtractor(_hands_out_dir(config) / "huggingface_features").status())
+            elif parsed.path == "/api/local/transformers-status":
+                self._send_json(TransformersTextGenerator(_hands_out_dir(config) / "transformers_text").status())
+            elif parsed.path == "/api/whatsapp/status":
+                self._send_json(WhatsAppMessenger(_hands_out_dir(config) / "whatsapp_messages").status())
+            elif parsed.path == "/api/whatsapp/messages":
+                params = urllib.parse.parse_qs(parsed.query)
+                result = WhatsAppMessenger(_hands_out_dir(config) / "whatsapp_messages").search_messages(
+                    params.get("query", [""])[0],
+                    limit=_safe_int(params.get("limit", ["20"])[0], 20),
+                    direction=params.get("direction", ["all"])[0],
+                )
+                self._send_json(result)
+            elif parsed.path == "/api/whatsapp/webhook":
+                self._handle_whatsapp_webhook_verify(parsed)
             elif parsed.path == "/api/download":
                 params = urllib.parse.parse_qs(parsed.query)
                 self._handle_download(params.get("path", [""])[0])
@@ -2863,14 +4050,68 @@ def _handler_factory(config: Config, agent: Agent, brain: BrainServer) -> type[B
             if parsed.path == "/api/bindings/save":
                 self._handle_binding_save()
                 return
+            if parsed.path == "/api/openrouter/select":
+                self._handle_openrouter_select()
+                return
+            if parsed.path == "/api/model-level/use":
+                self._handle_model_level_use()
+                return
+            if parsed.path == "/api/agents/create":
+                self._handle_agent_create()
+                return
+            if parsed.path == "/api/openrouter/routing":
+                self._handle_openrouter_routing()
+                return
             if parsed.path == "/api/minds/ask":
                 self._handle_minds_ask()
                 return
             if parsed.path == "/api/media/song-local":
                 self._handle_song_local()
                 return
+            if parsed.path == "/api/media/music-api-generate":
+                self._handle_music_api_generate()
+                return
+            if parsed.path == "/api/media/openai-image-generate":
+                self._handle_openai_image_generate()
+                return
+            if parsed.path == "/api/media/huggingface-image-generate":
+                self._handle_huggingface_image_generate()
+                return
+            if parsed.path == "/api/ai/huggingface-feature-extract":
+                self._handle_huggingface_feature_extract()
+                return
+            if parsed.path == "/api/local/transformers-generate":
+                self._handle_transformers_generate()
+                return
             if parsed.path == "/api/media/music-video-local":
                 self._handle_music_video_local()
+                return
+            if parsed.path == "/api/media/openrouter-video-generate":
+                self._handle_openrouter_video_generate()
+                return
+            if parsed.path == "/api/media/prompt-video-generate":
+                self._handle_prompt_video_generate()
+                return
+            if parsed.path == "/api/media/huggingface-video-generate":
+                self._handle_huggingface_video_generate()
+                return
+            if parsed.path == "/api/media/openrouter-speech-generate":
+                self._handle_openrouter_speech_generate()
+                return
+            if parsed.path == "/api/voice-profile/save":
+                self._handle_voice_profile_save()
+                return
+            if parsed.path == "/api/voice/speak":
+                self._handle_voice_speak()
+                return
+            if parsed.path == "/api/whatsapp/draft":
+                self._handle_whatsapp_draft()
+                return
+            if parsed.path == "/api/whatsapp/send":
+                self._handle_whatsapp_send()
+                return
+            if parsed.path == "/api/whatsapp/webhook":
+                self._handle_whatsapp_webhook_receive()
                 return
             if parsed.path == "/api/media/image-music-video-local":
                 self._handle_image_music_video_local()
@@ -2906,6 +4147,7 @@ def _handler_factory(config: Config, agent: Agent, brain: BrainServer) -> type[B
                 payload = self._read_json()
                 message = str(payload.get("message", "")).strip()
                 prefer_small_model = payload.get("prefer_small_model") is True
+                requested_chat_provider = _chat_provider_from_payload(payload)
                 if not message:
                     self._send_json({"error": "message is required"}, HTTPStatus.BAD_REQUEST)
                     return
@@ -2953,6 +4195,30 @@ def _handler_factory(config: Config, agent: Agent, brain: BrainServer) -> type[B
                         }
                     )
                     return
+                voice_answer = _chat_voice_profile_answer(config, agent, message)
+                if voice_answer:
+                    agent.memory.append_conversation(agent.session_id, "user", message)
+                    agent.memory.append_conversation(agent.session_id, "assistant", voice_answer["reply"])
+                    voice_answer["elapsed_seconds"] = round(time.time() - started, 3)
+                    voice_answer["session_id"] = agent.session_id
+                    self._send_json(voice_answer)
+                    return
+                local_multimodal_answer = _chat_local_multimodal_answer(config, agent, message)
+                if local_multimodal_answer:
+                    agent.memory.append_conversation(agent.session_id, "user", message)
+                    agent.memory.append_conversation(agent.session_id, "assistant", local_multimodal_answer["reply"])
+                    local_multimodal_answer["elapsed_seconds"] = round(time.time() - started, 3)
+                    local_multimodal_answer["session_id"] = agent.session_id
+                    _record_continuous_step(
+                        config,
+                        "chat_local_multimodal",
+                        message,
+                        "handled local OCR/speech/conversation request before local LLM fallback",
+                        outputs=local_multimodal_answer,
+                        source="web_chat",
+                    )
+                    self._send_json(local_multimodal_answer)
+                    return
                 media_answer = _chat_media_answer(config, message)
                 if media_answer:
                     agent.memory.append_conversation(agent.session_id, "user", message)
@@ -2968,6 +4234,125 @@ def _handler_factory(config: Config, agent: Agent, brain: BrainServer) -> type[B
                         source="web_chat",
                     )
                     self._send_json(media_answer)
+                    return
+                huggingface_answer = _chat_huggingface_learning_answer(config, agent, message)
+                if huggingface_answer:
+                    agent.memory.append_conversation(agent.session_id, "user", message)
+                    agent.memory.append_conversation(agent.session_id, "assistant", huggingface_answer["reply"])
+                    _refresh_brain_csv(config)
+                    huggingface_answer["elapsed_seconds"] = round(time.time() - started, 3)
+                    huggingface_answer["session_id"] = agent.session_id
+                    _record_continuous_step(
+                        config,
+                        "chat_huggingface_learning",
+                        message,
+                        "imported public Hugging Face metadata/card text, saved reviewable learning, and generated local artifacts",
+                        outputs=huggingface_answer,
+                        record_id=huggingface_answer.get("record_id", ""),
+                        source="web_chat",
+                    )
+                    self._send_json(huggingface_answer)
+                    return
+                if requested_chat_provider and requested_chat_provider != "local":
+                    if not cloud_allowed():
+                        reply = (
+                            f"{requested_chat_provider} chat is linked but cloud mode is blocked because CLOUD_ALLOWED is not true. "
+                            "Gima kept this request local-first for privacy. Restart Gima with CLOUD_ALLOWED=true only when you intentionally want chat prompts sent to linked AI APIs."
+                        )
+                        agent.memory.append_conversation(agent.session_id, "user", message)
+                        agent.memory.append_conversation(agent.session_id, "assistant", reply)
+                        self._send_json(
+                            {
+                                "reply": reply,
+                                "cloud_blocked": True,
+                                "requested_provider": requested_chat_provider,
+                                "elapsed_seconds": round(time.time() - started, 3),
+                                "session_id": agent.session_id,
+                            }
+                        )
+                        return
+                    if requested_chat_provider not in _cloud_chat_providers(config):
+                        reply = f"{requested_chat_provider} is not linked yet. Save its API key in API Bindings first, or switch Chat mode back to Local brain + memory."
+                        agent.memory.append_conversation(agent.session_id, "user", message)
+                        agent.memory.append_conversation(agent.session_id, "assistant", reply)
+                        self._send_json(
+                            {
+                                "reply": reply,
+                                "provider_unavailable": True,
+                                "requested_provider": requested_chat_provider,
+                                "elapsed_seconds": round(time.time() - started, 3),
+                                "session_id": agent.session_id,
+                            }
+                        )
+                        return
+                    cloud_answer: str | None = None
+                    cloud_errors: list[str] = []
+                    try:
+                        cloud_answer = agent.teacher_models.ask(requested_chat_provider, _cloud_chat_prompt(message))
+                    except Exception as error:
+                        cloud_errors.append(f"{requested_chat_provider}: {error}")
+                        agent.memory.audit("cloud_chat_fallback", requested_chat_provider, str(error), "error")
+                    if cloud_answer:
+                        answer = cloud_answer
+                        agent.memory.append_conversation(agent.session_id, "user", message)
+                        agent.memory.append_conversation(agent.session_id, "assistant", answer)
+                        record_id = agent.memory.add(
+                            Record(
+                                category="teacher",
+                                subcategory="cloud_chat",
+                                kind="teacher_answer",
+                                title=f"Cloud chat answer: {message[:80]}",
+                                content=answer[:100000],
+                                keywords="openai chatgpt claude gemini cloud chat highest model",
+                                source=f"{requested_chat_provider} cloud API",
+                                confidence="0.60",
+                                status="review",
+                            )
+                        )
+                        _refresh_brain_csv(config)
+                        _record_continuous_step(
+                            config,
+                            "chat_cloud_answer",
+                            message,
+                            "answered explicit linked cloud chat request before local report, weather, search, or memory handlers",
+                            outputs={
+                                "reply": answer,
+                                "provider": requested_chat_provider,
+                                "configured_model": _cloud_model_name(config, requested_chat_provider),
+                                "cloud_errors": cloud_errors,
+                                "elapsed_seconds": round(time.time() - started, 3),
+                                "session_id": agent.session_id,
+                            },
+                            record_id=record_id,
+                            source="web_chat",
+                        )
+                        self._send_json(
+                            {
+                                "reply": answer,
+                                "provider": requested_chat_provider,
+                                "configured_model": _cloud_model_name(config, requested_chat_provider),
+                                "cloud_errors": cloud_errors,
+                                "elapsed_seconds": round(time.time() - started, 3),
+                                "session_id": agent.session_id,
+                            }
+                        )
+                        return
+                    reply = (
+                        f"{requested_chat_provider} did not return an answer. "
+                        "Gima stopped before local fallback because you explicitly selected this Chat mode. "
+                        "Check the provider key, quota, model name, or switch Chat mode back to Local brain + memory."
+                    )
+                    agent.memory.append_conversation(agent.session_id, "user", message)
+                    agent.memory.append_conversation(agent.session_id, "assistant", reply)
+                    self._send_json(
+                        {
+                            "reply": reply,
+                            "provider": requested_chat_provider,
+                            "cloud_errors": cloud_errors,
+                            "elapsed_seconds": round(time.time() - started, 3),
+                            "session_id": agent.session_id,
+                        }
+                    )
                     return
                 artifact_engine = ChatArtifactEngine(_hands_out_dir(config), config.web.allowed_domains)
                 artifact_answer = (
@@ -3019,6 +4404,22 @@ def _handler_factory(config: Config, agent: Agent, brain: BrainServer) -> type[B
                     )
                     return
                 if _should_use_all_ai(message):
+                    if not cloud_allowed():
+                        reply = (
+                            "Cloud AI requests are blocked because CLOUD_ALLOWED is not true. "
+                            "Gima kept this local-first for privacy. Set CLOUD_ALLOWED=true only when you intentionally want linked AI APIs to receive the request."
+                        )
+                        agent.memory.append_conversation(agent.session_id, "user", message)
+                        agent.memory.append_conversation(agent.session_id, "assistant", reply)
+                        self._send_json(
+                            {
+                                "reply": reply,
+                                "cloud_blocked": True,
+                                "elapsed_seconds": round(time.time() - started, 3),
+                                "session_id": agent.session_id,
+                            }
+                        )
+                        return
                     online_providers = [provider for provider in _linked_mind_providers(config, []) if provider != "local"]
                     answer, teacher_results = agent.answer_with_all_ai(_strip_all_ai_prefix(message), online_providers)
                     agent.memory.append_conversation(agent.session_id, "user", message)
@@ -3046,11 +4447,12 @@ def _handler_factory(config: Config, agent: Agent, brain: BrainServer) -> type[B
                         }
                     )
                     return
-                if _should_use_cloud_chat(config, message):
+                if (requested_chat_provider and requested_chat_provider != "local") or (not requested_chat_provider and _should_use_cloud_chat(config, message)):
                     cloud_answer: str | None = None
                     cloud_provider = ""
                     cloud_errors: list[str] = []
-                    for provider in _cloud_chat_providers(config):
+                    cloud_providers = [requested_chat_provider] if requested_chat_provider and requested_chat_provider != "local" else _cloud_chat_providers(config)
+                    for provider in cloud_providers:
                         try:
                             cloud_answer = agent.teacher_models.ask(provider, _cloud_chat_prompt(message))
                             cloud_provider = provider
@@ -3126,12 +4528,13 @@ def _handler_factory(config: Config, agent: Agent, brain: BrainServer) -> type[B
                     )
                     return
                 model_level_used = "fast" if prefer_small_model else config.model.active_level
+                model_timeout_cap = 75
                 reply = _with_temporary_model_level(
                     config,
                     "fast" if prefer_small_model else None,
                     lambda: agent.chat(
                         message,
-                        model_timeout_seconds=max(15, min(75, config.model.timeout_seconds)),
+                        model_timeout_seconds=max(15, min(model_timeout_cap, config.model.timeout_seconds)),
                         max_tokens=min(96, config.model.max_tokens),
                         fallback_on_model_error=True,
                     ),
@@ -3222,6 +4625,89 @@ def _handler_factory(config: Config, agent: Agent, brain: BrainServer) -> type[B
             except Exception as error:
                 self._send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
 
+        def _handle_openrouter_select(self) -> None:
+            try:
+                payload = self._read_json()
+                model = str(payload.get("model", "")).strip()
+                selected = OpenRouterCatalog(config).select_model(model)
+                config.teacher_models.openrouter_model = selected
+                _record_continuous_step(
+                    config,
+                    "select_openrouter_model",
+                    f"select OpenRouter model {selected}",
+                    "stored the preferred OpenRouter model locally and made it the first model used by Gima cloud chat",
+                    inputs={"model": selected},
+                    outputs={"selected_model": selected},
+                    source="web_api_binding",
+                )
+                self._send_json({"ok": True, "selected_model": selected})
+            except Exception as error:
+                self._send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+
+        def _handle_model_level_use(self) -> None:
+            try:
+                payload = self._read_json()
+                level = str(payload.get("level", "")).strip()
+                restart = payload.get("restart") is not False
+                manager = ModelLevelManager(config, getattr(config, "_config_path", None))
+                target = manager.level(level)
+                was_running = bool(brain.status().get("running"))
+                values = manager.apply_level(target.level)
+                brain_restarted = False
+                brain_pid = None
+                if restart and was_running:
+                    brain.stop()
+                    brain_pid = brain.start()
+                    brain_restarted = True
+                _record_continuous_step(
+                    config,
+                    "switch_local_model_level",
+                    f"switch local model level to {target.level}",
+                    "updated Gima's local model level from the web UI and restarted the brain server when it was already running",
+                    inputs={"level": target.level, "restart": restart},
+                    outputs={
+                        "active_level": values.get("active_level"),
+                        "model": values.get("model"),
+                        "model_path": values.get("model_path"),
+                        "brain_restarted": brain_restarted,
+                        "brain_pid": brain_pid,
+                    },
+                    source="web_model_selector",
+                )
+                self._send_json(
+                    {
+                        "ok": True,
+                        "active_level": values.get("active_level"),
+                        "model": values.get("model"),
+                        "model_path": values.get("model_path"),
+                        "brain_restarted": brain_restarted,
+                        "brain_pid": brain_pid,
+                    }
+                )
+            except Exception as error:
+                self._send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+
+        def _handle_openrouter_routing(self) -> None:
+            try:
+                payload = self._read_json()
+                routing = OpenRouterCatalog(config).save_routing_config(payload)
+                _record_continuous_step(
+                    config,
+                    "save_openrouter_routing",
+                    "save OpenRouter routing profile",
+                    "stored provider routing, data collection, fallback, auxiliary, and code-router settings for Gima cloud calls",
+                    inputs={
+                        "routing_sort": routing.get("routing_sort"),
+                        "data_collection": routing.get("data_collection"),
+                        "fallback_models": routing.get("fallback_models"),
+                    },
+                    outputs=routing,
+                    source="web_api_binding",
+                )
+                self._send_json(routing)
+            except Exception as error:
+                self._send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+
         def _handle_minds_ask(self) -> None:
             try:
                 payload = self._read_json()
@@ -3287,6 +4773,437 @@ def _handler_factory(config: Config, agent: Agent, brain: BrainServer) -> type[B
             except Exception as error:
                 self._send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
 
+        def _handle_music_api_generate(self) -> None:
+            try:
+                payload = self._read_json()
+                prompt = str(payload.get("prompt", "")).strip()
+                provider = str(payload.get("provider", "huggingface_musicgen"))
+                project = ExternalMusicApiGenerator(_hands_out_dir(config) / "external_music").generate(
+                    prompt,
+                    provider=provider,
+                    lyrics=str(payload.get("lyrics", "")),
+                    model=str(payload.get("model", "")),
+                    duration_seconds=_safe_int(str(payload.get("duration_seconds", "30")), 30),
+                    instrumental=bool(payload.get("instrumental", False)),
+                    timeout_seconds=_safe_int(str(payload.get("timeout_seconds", "300")), 300),
+                    consent=bool(payload.get("consent", False)),
+                )
+                record_id = agent.memory.add(
+                    Record(
+                        category="audio",
+                        subcategory="external_music_api",
+                        kind="generated_media",
+                        title=f"External music API: {prompt[:80]}",
+                        content=project.manifest_path.read_text(encoding="utf-8"),
+                        source=str(project.manifest_path),
+                        media_path=str(project.output_path),
+                        status="review",
+                    )
+                )
+                response = _project_payload(project.output_path, project.manifest_path, record_id)
+                response.update({"provider": provider, "prompt_file": str(project.prompt_path)})
+                _refresh_brain_csv(config)
+                _record_continuous_step(
+                    config,
+                    "generate_external_music_api",
+                    prompt,
+                    "generated audio through an approved external music API, saved manifest in hands/out, and indexed it in memory",
+                    inputs={
+                        "provider": provider,
+                        "duration_seconds": _safe_int(str(payload.get("duration_seconds", "30")), 30),
+                        "instrumental": bool(payload.get("instrumental", False)),
+                    },
+                    outputs=response,
+                    record_id=record_id,
+                    source="web_media",
+                )
+                self._send_json(response)
+            except Exception as error:
+                self._send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+
+        def _handle_openai_image_generate(self) -> None:
+            try:
+                payload = self._read_json()
+                prompt = str(payload.get("prompt", "")).strip()
+                result = OpenAIImageGenerator(_hands_out_dir(config) / "openai_images").generate(
+                    prompt,
+                    model=str(payload.get("model", "gpt-image-2")),
+                    size=str(payload.get("size", "1024x1024")),
+                    quality=str(payload.get("quality", "auto")),
+                    consent=bool(payload.get("consent", False)),
+                )
+                manifest_path = Path(result["manifest_path"])
+                output_path = Path(result["output_path"])
+                record_id = agent.memory.add(
+                    Record(
+                        category="image",
+                        subcategory="openai_image_generation",
+                        kind="generated_media",
+                        title=f"ChatGPT image: {prompt[:80]}",
+                        content=manifest_path.read_text(encoding="utf-8"),
+                        source=str(manifest_path),
+                        media_path=str(output_path),
+                        status="review",
+                    )
+                )
+                response = {
+                    "status": "generated",
+                    "provider": "openai",
+                    "output": str(output_path),
+                    "generated_path": str(output_path),
+                    "manifest": str(manifest_path),
+                    "prompt_file": result["prompt_path"],
+                    "model": result["model"],
+                    "size": result["size"],
+                    "quality": result["quality"],
+                    "revised_prompt": result["revised_prompt"],
+                    "record_id": record_id,
+                }
+                _refresh_brain_csv(config)
+                _record_continuous_step(
+                    config,
+                    "generate_openai_image",
+                    prompt,
+                    "generated a ChatGPT/OpenAI image into hands/out, saved a provenance manifest, and indexed the result in memory",
+                    inputs={"model": result["model"], "size": result["size"], "quality": result["quality"]},
+                    outputs=response,
+                    record_id=record_id,
+                    source="web_media",
+                )
+                self._send_json(response)
+            except Exception as error:
+                self._send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+
+        def _handle_huggingface_image_generate(self) -> None:
+            try:
+                payload = self._read_json()
+                prompt = str(payload.get("prompt", "")).strip()
+                result = HuggingFaceImageGenerator(_hands_out_dir(config) / "huggingface_images").generate(
+                    prompt,
+                    model=str(payload.get("model", os.environ.get("GIMA_HF_IMAGE_MODEL", "black-forest-labs/FLUX.1-dev"))),
+                    provider=str(payload.get("provider", os.environ.get("GIMA_HF_IMAGE_PROVIDER", "wavespeed"))),
+                    consent=bool(payload.get("consent", False)),
+                )
+                manifest_path = Path(str(result["manifest_path"]))
+                output_path = Path(str(result["output_path"]))
+                record_id = agent.memory.add(
+                    Record(
+                        category="image",
+                        subcategory="huggingface_text_to_image",
+                        kind="generated_media",
+                        title=f"Hugging Face image: {prompt[:80]}",
+                        content=manifest_path.read_text(encoding="utf-8"),
+                        source=str(manifest_path),
+                        media_path=str(output_path),
+                        status="review",
+                    )
+                )
+                response = {
+                    "status": result.get("status", "generated"),
+                    "provider": "huggingface",
+                    "inference_provider": result.get("inference_provider", ""),
+                    "model": result.get("model", ""),
+                    "output": str(output_path),
+                    "generated_path": str(output_path),
+                    "download_url": _download_url(output_path),
+                    "manifest": str(manifest_path),
+                    "manifest_download_url": _download_url(manifest_path),
+                    "prompt_file": result.get("prompt_path", ""),
+                    "record_id": record_id,
+                }
+                _refresh_brain_csv(config)
+                _record_continuous_step(
+                    config,
+                    "generate_huggingface_image",
+                    prompt,
+                    "generated text-to-image through Hugging Face InferenceClient with explicit consent and local manifest",
+                    inputs={
+                        "model": response["model"],
+                        "provider": response["inference_provider"],
+                    },
+                    outputs=response,
+                    record_id=record_id,
+                    source="web_media",
+                )
+                self._send_json(response)
+            except Exception as error:
+                self._send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+
+        def _handle_huggingface_feature_extract(self) -> None:
+            try:
+                payload = self._read_json()
+                text = str(payload.get("text", "")).strip()
+                result = HuggingFaceFeatureExtractor(_hands_out_dir(config) / "huggingface_features").extract(
+                    text,
+                    model=str(payload.get("model", os.environ.get("GIMA_HF_FEATURE_MODEL", "microsoft/harrier-oss-v1-0.6b"))),
+                    provider=str(payload.get("provider", os.environ.get("GIMA_HF_FEATURE_PROVIDER", "hf-inference"))),
+                    consent=bool(payload.get("consent", False)),
+                )
+                manifest_path = Path(str(result["manifest_path"]))
+                record_id = agent.memory.add(
+                    Record(
+                        category="ai",
+                        subcategory="huggingface_feature_extraction",
+                        kind="feature_vectors",
+                        title=f"Hugging Face features: {text[:80]}",
+                        content=manifest_path.read_text(encoding="utf-8"),
+                        source=str(manifest_path),
+                        status="review",
+                    )
+                )
+                response = {
+                    "status": result.get("status", "generated"),
+                    "provider": "huggingface",
+                    "inference_provider": result.get("inference_provider", ""),
+                    "model": result.get("model", ""),
+                    "input": result.get("input_path", ""),
+                    "features": result.get("features_path", ""),
+                    "features_download_url": _download_url(Path(str(result["features_path"]))),
+                    "csv": result.get("csv_path", ""),
+                    "csv_download_url": _download_url(Path(str(result["csv_path"]))),
+                    "manifest": str(manifest_path),
+                    "manifest_download_url": _download_url(manifest_path),
+                    "stats": result.get("stats", {}),
+                    "record_id": record_id,
+                }
+                _refresh_brain_csv(config)
+                _record_continuous_step(
+                    config,
+                    "huggingface_feature_extraction",
+                    text[:240],
+                    "created Hugging Face feature vectors for approved text and saved local JSON/CSV artifacts",
+                    inputs={
+                        "model": response["model"],
+                        "provider": response["inference_provider"],
+                    },
+                    outputs=response,
+                    record_id=record_id,
+                    source="web_ai",
+                )
+                self._send_json(response)
+            except Exception as error:
+                self._send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+
+        def _handle_transformers_generate(self) -> None:
+            try:
+                payload = self._read_json()
+                prompt = str(payload.get("prompt", "")).strip()
+                result = TransformersTextGenerator(_hands_out_dir(config) / "transformers_text").generate(
+                    prompt,
+                    model=str(payload.get("model", os.environ.get("GIMA_TRANSFORMERS_MODEL", "google/gemma-2-2b-it"))),
+                    device=str(payload.get("device", os.environ.get("GIMA_TRANSFORMERS_DEVICE", "auto"))),
+                    max_new_tokens=int(payload.get("max_new_tokens", 256) or 256),
+                    local_files_only=bool(payload.get("local_files_only", True)),
+                    consent=bool(payload.get("consent", False)),
+                )
+                manifest_path = Path(str(result["manifest_path"]))
+                record_id = agent.memory.add(
+                    Record(
+                        category="ai",
+                        subcategory="local_transformers_text_generation",
+                        kind="local_model_response",
+                        title=f"Local Transformers: {prompt[:80]}",
+                        content=manifest_path.read_text(encoding="utf-8"),
+                        source=str(manifest_path),
+                        status="review",
+                    )
+                )
+                response = {
+                    "status": result.get("status", "generated"),
+                    "provider": "local",
+                    "model": result.get("model", ""),
+                    "device": result.get("device", ""),
+                    "answer": result.get("answer", ""),
+                    "response": result.get("response_path", ""),
+                    "response_download_url": _download_url(Path(str(result["response_path"]))),
+                    "manifest": str(manifest_path),
+                    "manifest_download_url": _download_url(manifest_path),
+                    "local_files_only": result.get("local_files_only", True),
+                    "record_id": record_id,
+                }
+                _refresh_brain_csv(config)
+                _record_continuous_step(
+                    config,
+                    "local_transformers_text_generation",
+                    prompt[:240],
+                    "ran a local Hugging Face Transformers text-generation model and saved response artifacts",
+                    inputs={
+                        "model": response["model"],
+                        "device": response["device"],
+                        "local_files_only": response["local_files_only"],
+                    },
+                    outputs=response,
+                    record_id=record_id,
+                    source="web_local_ai",
+                )
+                self._send_json(response)
+            except Exception as error:
+                self._send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+
+        def _handle_whatsapp_draft(self) -> None:
+            try:
+                payload = self._read_json()
+                result = WhatsAppMessenger(_hands_out_dir(config) / "whatsapp_messages").draft_link(
+                    str(payload.get("to", "")),
+                    str(payload.get("message", "")),
+                )
+                manifest_path = Path(str(result["manifest_path"]))
+                record_id = agent.memory.add(
+                    Record(
+                        category="communication",
+                        subcategory="whatsapp",
+                        kind="message_draft",
+                        title=f"WhatsApp draft to {result.get('recipient', '')}",
+                        content=manifest_path.read_text(encoding="utf-8"),
+                        source=str(manifest_path),
+                        status="review",
+                    )
+                )
+                response = {
+                    "status": result.get("status", "drafted"),
+                    "provider": "whatsapp",
+                    "recipient": result.get("recipient", ""),
+                    "wa_me_link": result.get("wa_me_link", ""),
+                    "message_path": result.get("message_path", ""),
+                    "manifest": str(manifest_path),
+                    "manifest_download_url": _download_url(manifest_path),
+                    "record_id": record_id,
+                }
+                _refresh_brain_csv(config)
+                _record_continuous_step(
+                    config,
+                    "whatsapp_draft",
+                    f"draft WhatsApp message to {response['recipient']}",
+                    "created a WhatsApp wa.me draft link for user review before sending",
+                    inputs={"recipient": response["recipient"]},
+                    outputs=response,
+                    record_id=record_id,
+                    source="web_communication",
+                )
+                self._send_json(response)
+            except Exception as error:
+                self._send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+
+        def _handle_whatsapp_send(self) -> None:
+            try:
+                payload = self._read_json()
+                result = WhatsAppMessenger(_hands_out_dir(config) / "whatsapp_messages").send_text(
+                    str(payload.get("to", "")),
+                    str(payload.get("message", "")),
+                    consent=bool(payload.get("consent", False)),
+                )
+                manifest_path = Path(str(result["manifest_path"]))
+                record_id = agent.memory.add(
+                    Record(
+                        category="communication",
+                        subcategory="whatsapp",
+                        kind="message_sent",
+                        title=f"WhatsApp sent to {result.get('recipient', '')}",
+                        content=manifest_path.read_text(encoding="utf-8"),
+                        source=str(manifest_path),
+                        status="review",
+                    )
+                )
+                response = {
+                    "status": result.get("status", "sent"),
+                    "provider": "whatsapp",
+                    "recipient": result.get("recipient", ""),
+                    "message_path": result.get("message_path", ""),
+                    "response_path": result.get("response_path", ""),
+                    "response_download_url": _download_url(Path(str(result["response_path"]))),
+                    "manifest": str(manifest_path),
+                    "manifest_download_url": _download_url(manifest_path),
+                    "record_id": record_id,
+                    "api_response": result.get("api_response", {}),
+                }
+                _refresh_brain_csv(config)
+                _record_continuous_step(
+                    config,
+                    "whatsapp_send",
+                    f"send WhatsApp message to {response['recipient']}",
+                    "sent a WhatsApp text message through the official Cloud API after explicit consent",
+                    inputs={"recipient": response["recipient"]},
+                    outputs=response,
+                    record_id=record_id,
+                    source="web_communication",
+                )
+                self._send_json(response)
+            except Exception as error:
+                self._send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+
+        def _handle_whatsapp_webhook_verify(self, parsed: urllib.parse.ParseResult) -> None:
+            params = urllib.parse.parse_qs(parsed.query)
+            mode = params.get("hub.mode", [""])[0]
+            token = params.get("hub.verify_token", [""])[0]
+            challenge = params.get("hub.challenge", [""])[0]
+            expected = os.environ.get("WHATSAPP_WEBHOOK_VERIFY_TOKEN", "").strip()
+            if mode == "subscribe" and expected and token == expected:
+                data = challenge.encode("utf-8")
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", "text/plain; charset=utf-8")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+                return
+            self._send_json(
+                {
+                    "error": "WhatsApp webhook verification failed or WHATSAPP_WEBHOOK_VERIFY_TOKEN is not set",
+                    "webhook_path": "/api/whatsapp/webhook",
+                },
+                HTTPStatus.FORBIDDEN,
+            )
+
+        def _handle_whatsapp_webhook_receive(self) -> None:
+            try:
+                length = _safe_int(self.headers.get("Content-Length", "0"), 0)
+                raw = self.rfile.read(max(0, min(length, 2_000_000)))
+                payload = json.loads(raw.decode("utf-8")) if raw else {}
+                result = WhatsAppMessenger(_hands_out_dir(config) / "whatsapp_messages").record_webhook(
+                    payload,
+                    signature=self.headers.get("X-Hub-Signature-256", ""),
+                    raw_body=raw,
+                )
+                record_ids: list[str] = []
+                for row in result.get("messages", []):
+                    if not isinstance(row, dict):
+                        continue
+                    record_ids.append(
+                        agent.memory.add(
+                            Record(
+                                category="communication",
+                                subcategory="whatsapp",
+                                kind="message_inbound",
+                                title=f"WhatsApp inbound from {row.get('contact', '')}",
+                                content=str(row.get("text", "")),
+                                source=str(row.get("manifest_path", "")),
+                                status="review",
+                            )
+                        )
+                    )
+                response = {
+                    "status": result.get("status", "received"),
+                    "provider": "whatsapp",
+                    "received_count": result.get("received_count", 0),
+                    "webhook_path": result.get("webhook_path", ""),
+                    "messages": result.get("messages", []),
+                    "record_ids": record_ids,
+                }
+                _refresh_brain_csv(config)
+                _record_continuous_step(
+                    config,
+                    "whatsapp_webhook_receive",
+                    f"received {response['received_count']} WhatsApp message(s)",
+                    "stored official WhatsApp webhook messages in local inbox and Gima memory",
+                    inputs={"received_count": response["received_count"]},
+                    outputs=response,
+                    source="web_communication",
+                )
+                self._send_json(response)
+            except PermissionError as error:
+                self._send_json({"error": str(error)}, HTTPStatus.FORBIDDEN)
+            except Exception as error:
+                self._send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+
         def _handle_music_video_local(self) -> None:
             try:
                 payload = self._read_json()
@@ -3319,6 +5236,314 @@ def _handler_factory(config: Config, agent: Agent, brain: BrainServer) -> type[B
                     outputs=response,
                     record_id=record_id,
                     source="web_media",
+                )
+                self._send_json(response)
+            except Exception as error:
+                self._send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+
+        def _handle_openrouter_video_generate(self) -> None:
+            try:
+                payload = self._read_json()
+                prompt = str(payload.get("prompt", "")).strip()
+                result = OpenRouterVideoGenerator(_hands_out_dir(config) / "openrouter_video").generate(
+                    prompt,
+                    model=str(payload.get("model", "google/veo-3.1")),
+                    aspect_ratio=str(payload.get("aspect_ratio", "16:9")),
+                    duration=_safe_int(str(payload.get("duration", "8")), 8),
+                    resolution=str(payload.get("resolution", "720p")),
+                    generate_audio=bool(payload.get("generate_audio", True)),
+                    timeout_seconds=_safe_int(str(payload.get("timeout_seconds", "900")), 900),
+                    consent=bool(payload.get("consent", False)),
+                )
+                manifest_path = Path(str(result["manifest_path"]))
+                output_path = Path(str(result["output_path"]))
+                record_id = agent.memory.add(
+                    Record(
+                        category="video",
+                        subcategory="openrouter_veo_video",
+                        kind="generated_media",
+                        title=f"OpenRouter video: {prompt[:80]}",
+                        content=manifest_path.read_text(encoding="utf-8"),
+                        source=str(manifest_path),
+                        media_path=str(output_path),
+                        status="review",
+                    )
+                )
+                response = {
+                    "status": result.get("status", "generated"),
+                    "provider": "openrouter",
+                    "output": str(output_path),
+                    "generated_path": str(output_path),
+                    "download_url": _download_url(output_path),
+                    "manifest": str(manifest_path),
+                    "manifest_download_url": _download_url(manifest_path),
+                    "prompt_file": result.get("prompt_path", ""),
+                    "model": result.get("model", ""),
+                    "job_id": result.get("job_id", ""),
+                    "generation_id": result.get("generation_id", ""),
+                    "usage": result.get("usage", {}),
+                    "record_id": record_id,
+                }
+                _refresh_brain_csv(config)
+                _record_continuous_step(
+                    config,
+                    "generate_openrouter_video",
+                    prompt,
+                    "submitted an OpenRouter/Veo video generation job, downloaded the result into hands/out, and saved a provenance manifest",
+                    inputs={
+                        "model": str(payload.get("model", "google/veo-3.1")),
+                        "aspect_ratio": str(payload.get("aspect_ratio", "16:9")),
+                        "duration": _safe_int(str(payload.get("duration", "8")), 8),
+                    },
+                    outputs=response,
+                    record_id=record_id,
+                    source="web_media",
+                )
+                self._send_json(response)
+            except Exception as error:
+                self._send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+
+        def _handle_prompt_video_generate(self) -> None:
+            try:
+                payload = self._read_json()
+                prompt = str(payload.get("prompt", "")).strip()
+                provider = str(payload.get("provider", "auto")).strip().casefold()
+                if provider == "auto":
+                    provider = _select_prompt_video_provider()
+                if provider not in {"openrouter", "huggingface"}:
+                    raise ValueError("Prompt video provider must be auto, openrouter, or huggingface")
+                if provider == "openrouter":
+                    result = OpenRouterVideoGenerator(_hands_out_dir(config) / "prompt_video" / "openrouter").generate(
+                        prompt,
+                        model=str(payload.get("model", "google/veo-3.1")),
+                        aspect_ratio=str(payload.get("aspect_ratio", "16:9")),
+                        duration=_safe_int(str(payload.get("duration", "8")), 8),
+                        resolution=str(payload.get("resolution", "720p")),
+                        generate_audio=bool(payload.get("generate_audio", True)),
+                        timeout_seconds=_safe_int(str(payload.get("timeout_seconds", "900")), 900),
+                        consent=bool(payload.get("consent", False)),
+                    )
+                    subcategory = "prompt_to_video_openrouter"
+                    response_provider = "openrouter"
+                    extra = {
+                        "job_id": result.get("job_id", ""),
+                        "generation_id": result.get("generation_id", ""),
+                        "usage": result.get("usage", {}),
+                    }
+                else:
+                    result = HuggingFaceVideoGenerator(_hands_out_dir(config) / "prompt_video" / "huggingface").generate(
+                        prompt,
+                        model=str(payload.get("model", os.environ.get("GIMA_HF_VIDEO_MODEL", "Wan-AI/Wan2.2-TI2V-5B"))),
+                        provider=str(payload.get("inference_provider", os.environ.get("GIMA_HF_VIDEO_PROVIDER", "replicate"))),
+                        timeout_seconds=_safe_int(str(payload.get("timeout_seconds", "900")), 900),
+                        consent=bool(payload.get("consent", False)),
+                    )
+                    subcategory = "prompt_to_video_huggingface"
+                    response_provider = "huggingface"
+                    extra = {"inference_provider": result.get("inference_provider", "")}
+                manifest_path = Path(str(result["manifest_path"]))
+                output_path = Path(str(result["output_path"]))
+                record_id = agent.memory.add(
+                    Record(
+                        category="video",
+                        subcategory=subcategory,
+                        kind="generated_media",
+                        title=f"Prompt video: {prompt[:80]}",
+                        content=manifest_path.read_text(encoding="utf-8"),
+                        source=str(manifest_path),
+                        media_path=str(output_path),
+                        status="review",
+                    )
+                )
+                response = {
+                    "status": result.get("status", "generated"),
+                    "provider": response_provider,
+                    "model": result.get("model", ""),
+                    "output": str(output_path),
+                    "generated_path": str(output_path),
+                    "download_url": _download_url(output_path),
+                    "manifest": str(manifest_path),
+                    "manifest_download_url": _download_url(manifest_path),
+                    "prompt_file": result.get("prompt_path", ""),
+                    "record_id": record_id,
+                    **extra,
+                }
+                _refresh_brain_csv(config)
+                _record_continuous_step(
+                    config,
+                    "generate_prompt_video",
+                    prompt,
+                    "generated a prompt-only AI video through the selected cloud provider and saved MP4 plus manifest",
+                    inputs={"provider": response_provider, "model": response["model"]},
+                    outputs=response,
+                    record_id=record_id,
+                    source="web_media",
+                )
+                self._send_json(response)
+            except Exception as error:
+                self._send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+
+        def _handle_huggingface_video_generate(self) -> None:
+            try:
+                payload = self._read_json()
+                prompt = str(payload.get("prompt", "")).strip()
+                result = HuggingFaceVideoGenerator(_hands_out_dir(config) / "huggingface_video").generate(
+                    prompt,
+                    model=str(payload.get("model", os.environ.get("GIMA_HF_VIDEO_MODEL", "Wan-AI/Wan2.2-TI2V-5B"))),
+                    provider=str(payload.get("provider", os.environ.get("GIMA_HF_VIDEO_PROVIDER", "replicate"))),
+                    timeout_seconds=_safe_int(str(payload.get("timeout_seconds", "900")), 900),
+                    consent=bool(payload.get("consent", False)),
+                )
+                manifest_path = Path(str(result["manifest_path"]))
+                output_path = Path(str(result["output_path"]))
+                record_id = agent.memory.add(
+                    Record(
+                        category="video",
+                        subcategory="huggingface_text_to_video",
+                        kind="generated_media",
+                        title=f"Hugging Face video: {prompt[:80]}",
+                        content=manifest_path.read_text(encoding="utf-8"),
+                        source=str(manifest_path),
+                        media_path=str(output_path),
+                        status="review",
+                    )
+                )
+                response = {
+                    "status": result.get("status", "generated"),
+                    "provider": "huggingface",
+                    "inference_provider": result.get("inference_provider", ""),
+                    "model": result.get("model", ""),
+                    "output": str(output_path),
+                    "generated_path": str(output_path),
+                    "download_url": _download_url(output_path),
+                    "manifest": str(manifest_path),
+                    "manifest_download_url": _download_url(manifest_path),
+                    "prompt_file": result.get("prompt_path", ""),
+                    "record_id": record_id,
+                }
+                _refresh_brain_csv(config)
+                _record_continuous_step(
+                    config,
+                    "generate_huggingface_video",
+                    prompt,
+                    "generated text-to-video through Hugging Face InferenceClient with explicit consent and local manifest",
+                    inputs={
+                        "model": response["model"],
+                        "provider": response["inference_provider"],
+                    },
+                    outputs=response,
+                    record_id=record_id,
+                    source="web_media",
+                )
+                self._send_json(response)
+            except Exception as error:
+                self._send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+
+        def _handle_openrouter_speech_generate(self) -> None:
+            try:
+                payload = self._read_json()
+                text = str(payload.get("text", "")).strip()
+                result = OpenRouterSpeechGenerator(_hands_out_dir(config) / "openrouter_speech").generate(
+                    text,
+                    model=str(payload.get("model", "microsoft/mai-voice-2")),
+                    voice=str(payload.get("voice", "en-US-Harper:MAI-Voice-2")),
+                    response_format=str(payload.get("response_format", "mp3")),
+                    speed=float(payload.get("speed", 1.0)),
+                    style=str(payload.get("style", "cheerful")),
+                    styledegree=float(payload.get("styledegree", 1.0)),
+                    consent=bool(payload.get("consent", False)),
+                )
+                manifest_path = Path(str(result["manifest_path"]))
+                output_path = Path(str(result["output_path"]))
+                record_id = agent.memory.add(
+                    Record(
+                        category="audio",
+                        subcategory="openrouter_mai_speech",
+                        kind="generated_media",
+                        title=f"MAI speech: {text[:80]}",
+                        content=manifest_path.read_text(encoding="utf-8"),
+                        source=str(manifest_path),
+                        media_path=str(output_path),
+                        status="review",
+                    )
+                )
+                response = {
+                    "status": result.get("status", "generated"),
+                    "provider": "openrouter",
+                    "output": str(output_path),
+                    "generated_path": str(output_path),
+                    "download_url": _download_url(output_path),
+                    "manifest": str(manifest_path),
+                    "manifest_download_url": _download_url(manifest_path),
+                    "prompt_file": result.get("prompt_path", ""),
+                    "model": result.get("model", ""),
+                    "voice": result.get("voice", ""),
+                    "generation_id": result.get("generation_id", ""),
+                    "content_type": result.get("content_type", ""),
+                    "record_id": record_id,
+                }
+                _refresh_brain_csv(config)
+                _record_continuous_step(
+                    config,
+                    "generate_openrouter_speech",
+                    text[:500],
+                    "generated OpenRouter/Microsoft MAI speech audio into hands/out, saved a provenance manifest, and indexed it in memory",
+                    inputs={"model": result.get("model", ""), "voice": result.get("voice", "")},
+                    outputs=response,
+                    record_id=record_id,
+                    source="web_media",
+                )
+                self._send_json(response)
+            except Exception as error:
+                self._send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+
+        def _handle_voice_profile_save(self) -> None:
+            try:
+                payload = self._read_json()
+                profile = _save_voice_profile(
+                    config,
+                    agent,
+                    Path(str(payload.get("audio_path", ""))),
+                    str(payload.get("profile_name", "My original voice")),
+                    consent=bool(payload.get("consent", False)),
+                )
+                _record_continuous_step(
+                    config,
+                    "save_own_voice_profile",
+                    f"save own voice profile {profile['profile_name']}",
+                    "registered a consented local personal voice sample and saved a provenance manifest without enabling impersonation",
+                    inputs={"profile_name": profile["profile_name"], "audio_path": profile["source_path"]},
+                    outputs=profile,
+                    record_id=profile["record_id"],
+                    source="web_voice_profile",
+                )
+                self._send_json(profile)
+            except Exception as error:
+                self._send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+
+        def _handle_voice_speak(self) -> None:
+            try:
+                payload = self._read_json()
+                text = " ".join(str(payload.get("text", "")).strip().split())
+                if not text:
+                    raise ValueError("Speech text is required")
+                if len(text) > 1000:
+                    raise ValueError("Speech text is limited to 1000 characters for local speak")
+                Voice().speak(text)
+                agent.memory.append_conversation(agent.session_id, "assistant", text, category="voice")
+                response = {
+                    "status": "spoken",
+                    "provider": "macos_say",
+                    "local": True,
+                    "text": text,
+                }
+                _record_continuous_step(
+                    config,
+                    "local_voice_speak",
+                    "speak text locally",
+                    "spoke a short response through macOS say without sending text to cloud APIs",
+                    outputs=response,
+                    source="web_voice",
                 )
                 self._send_json(response)
             except Exception as error:
@@ -3810,6 +6035,38 @@ def _handler_factory(config: Config, agent: Agent, brain: BrainServer) -> type[B
             except Exception as error:
                 self._send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
 
+        def _handle_agent_create(self) -> None:
+            try:
+                payload = self._read_json()
+                created = AgentRegistry(config).create(
+                    name=str(payload.get("name", "")),
+                    template=str(payload.get("template", "artifact")),
+                    goal=str(payload.get("goal", "")),
+                    memory=agent.memory,
+                )
+                response = {
+                    "id": created.agent_id,
+                    "name": created.name,
+                    "template": created.template,
+                    "goal": created.goal,
+                    "status": created.status,
+                    "manifest_path": str(created.manifest_path),
+                    "self_update_id": created.self_update_id,
+                    "working_copy": created.working_copy,
+                    "plan_path": created.plan_path,
+                }
+                _record_continuous_step(
+                    config,
+                    "agent_create",
+                    f"create {created.template} agent {created.name}",
+                    "created a review-gated task agent manifest and saved it to local agent registry",
+                    outputs=response,
+                    source="web_agents",
+                )
+                self._send_json(response)
+            except Exception as error:
+                self._send_json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+
         def log_message(self, fmt: str, *args: Any) -> None:
             print(f"[web] {self.address_string()} {fmt % args}")
 
@@ -3910,6 +6167,7 @@ def _handler_factory(config: Config, agent: Agent, brain: BrainServer) -> type[B
 
 def _status_payload(config: Config, agent: Agent, brain: BrainServer) -> dict[str, Any]:
     brain_status = brain.status()
+    model_levels = ModelLevelManager(config).levels()
     return {
         "name": config.name,
         "workspace": str(config.resolved_workspace),
@@ -3926,6 +6184,21 @@ def _status_payload(config: Config, agent: Agent, brain: BrainServer) -> dict[st
         "conversation_rows": _count_csv_rows(config.resolved_data_dir / "csv" / "conversations.csv"),
         "brain": brain_status,
         "model": brain_status.get("models") or config.model.model,
+        "active_model_level": config.model.active_level,
+        "model_levels": [
+            {
+                "level": level.level,
+                "name": level.name,
+                "model": level.model,
+                "model_path": str(level.model_path),
+                "context_size": level.context_size,
+                "available": level.available,
+                "status": level.status,
+                "description": level.description,
+                "source": level.source,
+            }
+            for level in model_levels
+        ],
         "session_id": agent.session_id,
     }
 
@@ -3979,8 +6252,22 @@ def _codex_mode_payload(config: Config, brain: BrainServer) -> list[dict[str, st
     brain_status = brain.status()
     web_running = _web_ui_running(config)
     brain_running = bool(brain_status.get("running"))
+    codex_path = shutil.which("codex")
+    codex_version = ""
+    if codex_path:
+        try:
+            result = subprocess.run([codex_path, "--version"], capture_output=True, text=True, timeout=5, check=False)
+            codex_version = (result.stdout or result.stderr).strip().splitlines()[0][:120]
+        except Exception as error:
+            codex_version = f"version check failed: {error}"
 
     return [
+        {
+            "capability": "Codex CLI connection",
+            "status": "connected" if codex_path else "missing",
+            "gima_support": f"Codex CLI path: {codex_path or 'not found'}; version: {codex_version or 'unknown'}.",
+            "codex_gap": "Browser requests still use Gima's isolated-copy coding workflow instead of unrestricted terminal access.",
+        },
         {
             "capability": "Chat with repo and file context",
             "status": "done" if brain_rows else "started",
@@ -4061,6 +6348,26 @@ def _ai_task_map_payload(config: Config) -> dict[str, Any]:
     }
 
 
+def _public_apis_payload(config: Config, parsed) -> dict[str, Any]:
+    params = urllib.parse.parse_qs(parsed.query)
+    try:
+        return PublicApiCatalogStore(config).search(
+            query=params.get("q", [""])[0],
+            category=params.get("category", [""])[0],
+            auth=params.get("auth", [""])[0],
+            https_only=params.get("https", ["0"])[0] in {"1", "true", "yes", "on"},
+            no_auth_only=params.get("no_auth", ["0"])[0] in {"1", "true", "yes", "on"},
+            refresh=params.get("refresh", ["0"])[0] in {"1", "true", "yes", "on"},
+            limit=_safe_int(params.get("limit", ["50"])[0], 50),
+        )
+    except Exception as error:
+        return {
+            "error": str(error),
+            "source": PublicApiCatalogStore.repo_url,
+            "hint": "Check internet access, then retry. Existing cache will be used automatically after the first successful refresh.",
+        }
+
+
 def _deployment_payload(config: Config, brain: BrainServer) -> list[dict[str, str]]:
     brain_status = brain.status()
     web_pid_path = config.resolved_data_dir / "runtime" / "web_ui.pid"
@@ -4130,6 +6437,15 @@ def _agent_payload(config: Config) -> list[dict[str, str]]:
                     f"| next: {area_agent.get('next_action', '')}"
                 ),
                 "path": area_agent.get("latest_path", ""),
+            }
+        )
+    for created in AgentRegistry(config).list_agents()[:12]:
+        rows.append(
+            {
+                "name": created.get("name", "Gima task agent"),
+                "status": created.get("status", "created"),
+                "detail": f"{created.get('template', 'agent')}: {created.get('goal', '')}",
+                "path": created.get("manifest_path", ""),
             }
         )
     for update in updates[:8]:
@@ -4352,6 +6668,47 @@ def _free_quota_payload(config: Config) -> dict[str, Any]:
     }
 
 
+def _ai_router_plan(config: Config, params: dict[str, list[str]]) -> dict[str, Any]:
+    request = RoutingRequest(
+        message=params.get("message", [""])[0],
+        mode=params.get("mode", ["AUTO"])[0],
+        manual_model=params.get("model", [""])[0],
+        quality=params.get("quality", ["balanced"])[0],
+        speed=params.get("speed", ["balanced"])[0],
+        budget=params.get("budget", ["balanced"])[0],
+        privacy=params.get("privacy", ["normal"])[0],
+        has_images=params.get("has_images", ["0"])[0].casefold() in {"1", "true", "yes"},
+        context_tokens=_safe_int(params.get("context_tokens", ["0"])[0], 0),
+        tool_use=params.get("tool_use", ["0"])[0].casefold() in {"1", "true", "yes"},
+    )
+    decision = OpenRouterTaskRouter(config).decide(request)
+    return {
+        "request_id": decision.request_id,
+        "provider": decision.provider,
+        "model": decision.model,
+        "task_category": decision.task_category,
+        "mode": decision.mode,
+        "fallbacks": decision.fallbacks,
+        "reason": decision.reason,
+        "cloud_allowed": decision.cloud_allowed,
+        "estimated_prompt_tokens": decision.estimated_prompt_tokens,
+        "estimated_cost_usd": decision.estimated_cost_usd,
+        "security": {
+            "secrets_returned": False,
+            "management_key_used_for_inference": False,
+        },
+    }
+
+
+def _free_llm_plan_payload(parsed) -> dict[str, Any]:
+    params = urllib.parse.parse_qs(parsed.query)
+    return free_llm_plan(
+        params.get("task", [""])[0],
+        privacy=params.get("privacy", ["balanced"])[0],
+        limit=_safe_int(params.get("limit", ["6"])[0], 6),
+    )
+
+
 def _should_use_all_ai(message: str) -> bool:
     normalized = " ".join(message.casefold().split())
     return any(
@@ -4375,12 +6732,33 @@ def _should_use_all_ai(message: str) -> bool:
 
 
 def _should_use_cloud_chat(config: Config, message: str) -> bool:
+    if not cloud_allowed():
+        return False
     if not _cloud_chat_providers(config):
         return False
     normalized = " ".join(message.casefold().split())
     if any(term in normalized for term in {"use local", "local only", "offline only", "use brain", "brain:"}):
         return False
     return True
+
+
+def _chat_provider_from_payload(payload: dict[str, Any]) -> str:
+    raw = str(payload.get("chat_provider", "") or "").strip().casefold()
+    aliases = {
+        "": "",
+        "local": "local",
+        "brain": "local",
+        "memory": "local",
+        "openai": "chatgpt",
+        "chatgpt": "chatgpt",
+        "gpt": "chatgpt",
+        "openrouter": "openrouter",
+        "anthropic": "anthropic",
+        "claude": "anthropic",
+        "gemini": "gemini",
+        "google": "gemini",
+    }
+    return aliases.get(raw, "")
 
 
 def _cloud_chat_providers(config: Config) -> list[str]:
@@ -4407,7 +6785,12 @@ def _cloud_model_name(config: Config, provider: str) -> str:
 
 def _cloud_chat_prompt(message: str) -> str:
     return (
-        "You are helping inside Gima, a local AI workspace. Answer like ChatGPT: useful, direct, accurate, and concise. "
+        "You are answering inside Gima, Gimhan Gunarathne's local-first AI command deck. "
+        "Speak as Gima's assistant layer, not as the raw model provider. "
+        "If asked who developed Gima, say Gimhan Gunarathne is the project owner/developer and Codex can help implement reviewable code upgrades. "
+        "If asked how Gima can develop or improve, describe the safe engineering loop: inspect the project, preserve working features, edit reviewably, run tests, write an upgrade report, and restart/sync after approval. "
+        "You may mention that this particular answer is powered by an external provider only as implementation detail; do not answer 'I am OpenAI' or 'my developers at OpenAI' as Gima's identity. "
+        "Be useful, direct, accurate, and concise. "
         "Gima can route explicit web/current-information requests through its own public web search and import system before cloud chat. "
         "If this prompt asks for current information but does not include fetched sources, say you did not browse in this answer and suggest asking Gima to search the internet; do not say this chat has no browsing tool. "
         "For high-stakes facts, recommend source verification. "
@@ -4527,6 +6910,49 @@ def _chat_github_sync_answer(config: Config, message: str) -> dict[str, Any] | N
         "reply": f"GitHub sync completed.\n\n```text\n{output[-6000:]}\n```",
         "github_status": "completed",
         "exit_code": 0,
+    }
+
+
+def _chat_huggingface_learning_answer(config: Config, agent: Agent, message: str) -> dict[str, Any] | None:
+    url = extract_huggingface_url(message)
+    if not url:
+        return None
+    try:
+        result = HuggingFaceLearner(config, agent.memory).learn(url)
+    except Exception as error:
+        return {
+            "reply": (
+                f"I found this Hugging Face URL but could not import it safely:\n{url}\n\n"
+                f"Error: {error}\n\n"
+                "Gima only imports public Hugging Face metadata/model-card text and stores it for review. "
+                "It will not copy private data, hidden prompts, credentials, or restricted model assets."
+            ),
+            "sources": [url],
+            "used_internet": True,
+            "huggingface_learning": True,
+            "status": "error",
+        }
+    recommendations = "\n".join(f"- {item}" for item in result.recommendations)
+    files_text = "\n".join(f"- {file['path']}" for file in result.files)
+    reply = (
+        f"I imported and analyzed this public Hugging Face {result.repo_type}:\n"
+        f"{result.source_url}\n\n"
+        f"**What Gima learned**\n{result.summary}\n\n"
+        f"**What Gima can use to improve itself**\n{recommendations}\n\n"
+        "Saved as reviewable Gima memory. I did not change Gima's active model or code automatically.\n\n"
+        f"Generated files:\n{files_text}"
+    )
+    return {
+        "reply": reply,
+        "files": result.files,
+        "sources": [result.source_url],
+        "used_internet": True,
+        "huggingface_learning": True,
+        "repo_id": result.repo_id,
+        "repo_type": result.repo_type,
+        "record_id": result.record_id,
+        "review_id": result.review_id,
+        "status": "review_saved",
     }
 
 
@@ -4918,13 +7344,64 @@ def _lip_sync_renderer(config: Config) -> NeuralLipSyncRenderer:
     return NeuralLipSyncRenderer(config.resolved_hands_out_dir / "neural_lip_sync", backend_dir, python_path)
 
 
-def _chat_media_answer(config: Config, message: str) -> dict[str, Any] | None:
-    normalized = " ".join(message.casefold().split())
-    video_terms = {"video", "movie", "cinematic", "stage", "performing", "performance", "singing", "song"}
-    media_terms = {"image", "song", "music", "movie", "cinematic", "lip", "lip sync", "lip-sync", "stage", "performing", "singing"}
-    video_intent = any(term in normalized for term in video_terms) and any(term in normalized for term in media_terms)
-    if not video_intent:
-        return None
+def _voice_profile_dir(config: Config) -> Path:
+    return config.resolved_data_dir / "voice" / "profiles"
+
+
+def _voice_profile_manifest(config: Config) -> Path:
+    return _voice_profile_dir(config) / "default_voice_profile.json"
+
+
+def _save_voice_profile(config: Config, agent: Agent, audio_path: Path, profile_name: str, consent: bool) -> dict[str, Any]:
+    if not consent:
+        raise PermissionError("Saving a personal voice profile requires confirming this is your own voice or you have explicit permission.")
+    source = audio_path.expanduser().resolve()
+    if not source.exists() or not source.is_file():
+        raise FileNotFoundError(f"Voice sample does not exist: {source}")
+    if source.suffix.casefold() not in {".mp3", ".wav", ".m4a", ".flac", ".aac", ".ogg"}:
+        raise ValueError("Voice sample must be an audio file such as MP3, WAV, M4A, FLAC, AAC, or OGG")
+    clean_name = " ".join(profile_name.strip().split()) or "My original voice"
+    voice_dir = _voice_profile_dir(config)
+    voice_dir.mkdir(parents=True, exist_ok=True)
+    sample_path = _unique_path(voice_dir / f"{_safe_filename(clean_name)}{source.suffix.casefold()}")
+    shutil.copy2(source, sample_path)
+    manifest_path = _voice_profile_manifest(config)
+    manifest = {
+        "kind": "gima_personal_voice_profile",
+        "profile_name": clean_name,
+        "owner_confirmed": True,
+        "source_path": str(source),
+        "sample_path": str(sample_path),
+        "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "default": True,
+        "backend_status": "reference_saved_not_cloned",
+        "usage_limits": [
+            "Use only as Gimhan's own voice reference after explicit consent.",
+            "Do not impersonate any other person.",
+            "Do not claim voice cloning is available unless a configured backend actually supports it.",
+            "For public posting, label synthetic or AI-assisted speech/video where appropriate.",
+        ],
+    }
+    manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    record_id = agent.memory.add(
+        Record(
+            category="audio",
+            subcategory="personal_voice_profile",
+            kind="consented_voice_reference",
+            title=f"Personal voice profile: {clean_name}",
+            content=json.dumps(manifest, indent=2),
+            keywords="own voice original voice Gimhan personal voice reference consent speech lip sync",
+            source=str(manifest_path),
+            media_path=str(sample_path),
+            status="active",
+        )
+    )
+    _refresh_brain_csv(config)
+    manifest["record_id"] = record_id
+    return manifest
+
+
+def _attached_paths_from_message(message: str) -> list[Path]:
     attached: list[Path] = []
     for line in message.splitlines():
         marker = line.find(": /")
@@ -4933,10 +7410,179 @@ def _chat_media_answer(config: Config, message: str) -> dict[str, Any] | None:
         path = Path(line[marker + 2 :].strip()).expanduser().resolve()
         if path.exists() and path.is_file():
             attached.append(path)
+    return attached
+
+
+def _chat_voice_profile_answer(config: Config, agent: Agent, message: str) -> dict[str, Any] | None:
+    normalized = " ".join(message.casefold().split())
+    if not any(term in normalized for term in {"own voice", "my voice", "original voice", "mage original voice", "personal voice"}):
+        return None
+    attached = _attached_paths_from_message(message)
+    audio = next((path for path in attached if path.suffix.casefold() in {".mp3", ".wav", ".m4a", ".flac", ".aac", ".ogg"}), None)
+    if audio:
+        profile = _save_voice_profile(config, agent, audio, "Gimhan original voice 2", consent=True)
+        return {
+            "reply": (
+                "Saved your own voice profile as `Gimhan original voice 2`. "
+                "I will treat it as your consented original voice reference. "
+                "This does not mean voice cloning is active yet; it is now safely stored for future speech, lip-sync, and video workflows."
+            ),
+            "voice_profile": profile,
+            "media_status": "own_voice_profile_saved",
+            "files": [_file_payload(Path(profile["sample_path"])), _file_payload(_voice_profile_manifest(config))],
+        }
+    manifest = _voice_profile_manifest(config)
+    if manifest.exists():
+        profile = json.loads(manifest.read_text(encoding="utf-8"))
+        return {
+            "reply": (
+                f"Your personal voice profile is already saved as `{profile.get('profile_name', 'My original voice')}`. "
+                "To replace it, upload or paste a new MP3/WAV path and say: `This is my own voice, add it as my original voice`."
+            ),
+            "voice_profile": profile,
+            "media_status": "own_voice_profile_exists",
+        }
+    return {
+        "reply": (
+            "Yes. I can add your own voice as Gima's personal voice reference. "
+            "Upload an MP3/WAV/M4A sample or paste the file path, then say: "
+            "`This is my own voice, add it as Gimhan original voice 2`. "
+            "I will save it locally with a consent manifest. I will not impersonate anyone else or claim cloning is active until a real voice backend is connected."
+        ),
+        "media_status": "own_voice_needs_audio_sample",
+    }
+
+
+def _chat_local_multimodal_answer(config: Config, agent: Agent, message: str) -> dict[str, Any] | None:
+    normalized = " ".join(message.casefold().split())
+    attached = _attached_paths_from_message(message)
+    image_suffixes = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".tiff"}
+    images = [path for path in attached if path.suffix.casefold() in image_suffixes]
+    wants_ocr = images and any(
+        term in normalized
+        for term in {
+            "image to text",
+            "ocr",
+            "read image",
+            "extract text",
+            "text from image",
+            "what text",
+            "image text",
+        }
+    )
+    if wants_ocr:
+        output_dir = config.resolved_hands_out_dir / "image_to_text"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        sections: list[str] = []
+        files: list[dict[str, Any]] = []
+        for image in images[:8]:
+            records = read_file(image)
+            text = "\n\n".join(record.content for record in records)
+            sections.extend([f"## {image.name}", "", text or "No local OCR text was found.", ""])
+            record_id = agent.memory.add(
+                Record(
+                    category="vision",
+                    subcategory="image_to_text",
+                    kind="ocr",
+                    title=f"Image to text: {image.name}",
+                    content=text[:100000],
+                    keywords=f"image OCR text extraction {image.name}",
+                    source=str(image),
+                    media_path=str(image),
+                    status="review",
+                )
+            )
+            files.append(_file_payload(image, record_id))
+        report_path = output_dir / f"image_to_text_{uuid.uuid4().hex[:10]}.md"
+        report_path.write_text("# Gima Image To Text\n\n" + "\n".join(sections), encoding="utf-8")
+        files.insert(0, _file_payload(report_path))
+        _refresh_brain_csv(config)
+        return {
+            "reply": (
+                "I extracted local image-to-text/OCR notes from the attached image file(s). "
+                "If Tesseract is installed, OCR text is included; otherwise Gima still records image metadata. "
+                f"Report saved at:\n{report_path}"
+            ),
+            "files": files,
+            "media_status": "image_to_text_local",
+            "used_local_ocr": True,
+        }
+
+    wants_speak = any(
+        normalized.startswith(prefix)
+        for prefix in {
+            "speak ",
+            "say ",
+            "read aloud ",
+            "talk to me ",
+        }
+    ) or "speak with me" in normalized or "conversation ai" in normalized
+    if wants_speak:
+        if "speak with me" in normalized or "conversation ai" in normalized:
+            reply = (
+                "Gima can speak locally using macOS `say`, and the CLI voice conversation path is available through "
+                "`python3 -m human_ai.gima talk --voice`. In the web UI, use `/api/voice/speak` for local speech output; "
+                "browser microphone transcription still needs the next push-to-talk/Whisper UI upgrade."
+            )
+            return {"reply": reply, "media_status": "local_voice_conversation_ready", "local": True}
+        text = re.sub(r"^\s*(speak|say|read aloud|talk to me)\s*[:,-]?\s*", "", message, flags=re.IGNORECASE).strip()
+        text = text[:1000]
+        if text:
+            Voice().speak(text)
+            agent.memory.append_conversation(agent.session_id, "assistant", text, category="voice")
+            return {
+                "reply": f"I spoke this locally with macOS `say`:\n\n{text}",
+                "media_status": "local_voice_spoken",
+                "local": True,
+            }
+    return None
+
+
+def _chat_media_answer(config: Config, message: str) -> dict[str, Any] | None:
+    normalized = " ".join(message.casefold().split())
+    video_terms = {"video", "movie", "cinematic", "stage", "performing", "performance", "singing", "song"}
+    media_terms = {"image", "song", "music", "movie", "cinematic", "lip", "lip sync", "lip-sync", "stage", "performing", "singing"}
+    creation_terms = {"make", "create", "generate", "render", "produce", "build", "can you", "need"}
+    video_intent = any(term in normalized for term in video_terms) and (
+        any(term in normalized for term in media_terms) or any(term in normalized for term in creation_terms)
+    )
+    if not video_intent:
+        return None
+    attached = _attached_paths_from_message(message)
     image_suffixes = {".jpg", ".jpeg", ".png", ".webp"}
     audio_suffixes = {".mp3", ".wav", ".m4a", ".flac", ".aac", ".ogg"}
     images = [path for path in attached if path.suffix.casefold() in image_suffixes]
     audio = next((path for path in attached if path.suffix.casefold() in audio_suffixes), None)
+    if not attached:
+        subject = _video_subject_from_message(message)
+        prompt = (
+            f"Make a cinematic {subject} video.\n\n"
+            "Mode: video plan + scene prompts + storyboard.\n"
+            "Duration: 20 seconds.\n"
+            "Aspect ratio: 16:9.\n"
+            "Style: realistic cinematic, dramatic lighting, premium movie color grade.\n"
+            f"Subject: {subject}.\n"
+            "Scenes:\n"
+            "1. Wide establishing shot.\n"
+            "2. Low-angle action shot with motion.\n"
+            "3. Aerial tracking shot with atmosphere.\n"
+            "4. Close detail shot for emotion and realism.\n"
+            "5. Final hero shot with title text.\n"
+            "Camera: wide angle, slow push-in, smooth pan, drone-style tracking.\n"
+            "Effects: lens flare, light film grain, soft motion blur, cinematic color grade.\n"
+            "Output: create storyboard, scene-by-scene prompts, video generation prompt pack, and save files in hands/out."
+        )
+        return {
+            "reply": (
+                "Yes. I can help you make a video. For the current local setup, the best first step is to create a director plan, storyboard, and video-generation prompt pack. "
+                "If you upload an image or MP3, I can also route it to the image/music video tools. For true generated video frames, use OpenRouter/Veo or an open video backend when cloud/API consent is enabled.\n\n"
+                "Try sending this to Gima:\n\n"
+                f"```text\n{prompt}\n```"
+            ),
+            "files": [],
+            "media_status": "video_conversation_prompt",
+            "suggested_prompt": prompt,
+        }
     if images and not audio:
         return {
             "reply": (
@@ -5070,6 +7716,18 @@ def _chat_media_answer(config: Config, message: str) -> dict[str, Any] | None:
         "files": [_file_payload(project.output_path), _file_payload(project.manifest_path)],
         "media_status": "image_music_video_rendered",
     }
+
+
+def _video_subject_from_message(message: str) -> str:
+    cleaned = re.sub(
+        r"\b(can you|could you|please|gima|make|create|generate|render|produce|build|a|an|the|video|movie|cinematic|for me)\b",
+        " ",
+        message,
+        flags=re.IGNORECASE,
+    )
+    cleaned = re.sub(r"[^A-Za-z0-9 _-]+", " ", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned or "short cinematic scene"
 
 
 def _text_preview(path: Path, limit: int, tail: bool = False) -> str:

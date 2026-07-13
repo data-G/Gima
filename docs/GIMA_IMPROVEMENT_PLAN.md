@@ -10,11 +10,23 @@ Gima should become a local-first AI workspace that can:
 
 - answer from durable local memory with citations;
 - research the internet when current facts are needed;
+- operate as an OSINT-style public research assistant with source registers, contradiction notes, and exportable evidence;
+- run authorized research and security-audit workflows only for public sources, open-source code, or user-owned/permitted systems with confirmed scope;
 - create real downloadable artifacts such as Excel, JPG, PDF, code, audio, and video;
 - use optional teacher APIs without making them the system of record;
 - plan and render media only with consent, provenance, and quality checks;
-- improve code through backups, tests, review, and GitHub synchronization; and
+- support AI engineering and full-stack development through backups, tests, review, GitHub synchronization, and deployment preparation;
+- enforce privacy engineering through local-first storage, masked secrets, explicit cloud gates, and audit trails; and
 - show its limits honestly instead of producing placeholder work.
+
+## Professional Capability Tracks
+
+| Track | Practical Meaning | Near-Term Proof |
+|---|---|---|
+| Gima AI Engineer | Build, route, test, and evaluate local and cloud-assisted AI workflows. | Model-routing tests, provider fallback tests, capability dashboard, upgrade reports. |
+| OSINT Research Architect | Turn public-source and authorized-scope research into cited tables, dossiers, source registers, and uncertainty notes. | Research report with sources, authorization gate, contradiction flags, CSV/PDF export, citation validation. |
+| Privacy Engineer | Keep user data local by default and make cloud/network use explicit, auditable, and reversible. | `CLOUD_ALLOWED` gate, masked secrets, protected downloads, permission logs. |
+| Full-Stack AI Builder | Connect backend services, browser UI, files, artifacts, APIs, GitHub, and deployment workflows into one usable product. | Working web UI, generated files, tested routes, GitHub sync, launch documentation. |
 
 ## Build Order
 
@@ -25,9 +37,10 @@ Gima should become a local-first AI workspace that can:
 | 3. Memory and Learning | P0 | Gima continuously learns but keeps review control | Brain index refresh, source review queue, teacher cache, duplicate detection, stale memory correction | New learnings have source, status, timestamp, and can be approved/rejected |
 | 4. GitHub and Recovery | P0 | Work can be safely shared and restored | GitHub auth guide, branch/commit/push helper, backup restore test, license/contribution docs | `confirm GitHub sync` creates a branch/PR after auth and backups restore cleanly |
 | 5. Deep Research | P1 | Gima can produce cited research dossiers | Resumable research jobs, trusted-source ranking, claim-to-source mapping, contradiction notes, export bundle | A research request creates Markdown/PDF/CSV with citations and uncertainty flags |
+| 5A. Authorized Research & Security Audit | P1 | Gima can help with safe public research and user-owned security review | Authorization gate, scope form, prohibited-action filter, responsible report template, private-report default | Security/reverse-engineering-style prompts ask the five gate questions before deeper work |
 | 6. Advanced Sheets and Costing | P1 | Gima can do business-grade estimating | Editable assumptions, supplier quote fields, formulas, scenario tabs, charts, margins, taxes, sensitivity | Chicken sandwich and custom costing examples export correct Excel/JPG/PDF |
 | 7. Image Power | P1 | Gima can understand, edit, and generate images through approved backends | Provider/local adapter, input/output manifest, prompt history, before/after previews, rights checks | Image edit request returns downloadable output and provenance manifest |
-| 8. Video Song Director | P1 | Gima can make polished local music videos from images/audio | Beat/pitch analysis, scene planner, camera moves, emotion map, lyric captions, ffmpeg render templates | Image + MP3 request creates MP4, storyboard, timing map, and eval report |
+| 8. Video Song Director | P1 | Gima can make polished local music videos from images/audio | Beat/pitch analysis, scene planner, camera moves, emotion map, lyric captions, ffmpeg render templates, approved MusicGen/Suno-compatible/OpenRouter/ComfyUI API bridges | Image + MP3 request creates MP4, storyboard, timing map, eval report, and media API provenance when cloud is used |
 | 9. Lip-Sync Rendering | P1 | Gima can plan and optionally render consented lip-sync | Consent gate, face/audio validation, segmenting, Wav2Lip/SadTalker-class adapter, drift eval | Lip-sync job creates render or explicit install instructions, never silent fake output |
 | 10. Agent Workbench | P2 | Gima can manage multi-step goals safely | Plan/act/observe trace, task ledger, pause/resume, tool permissions, progress UI, completion tests | Long task survives restart and finishes only when tests pass |
 | 11. Multimodal Understanding | P2 | Gima can reason over image, audio, video, and documents | VLM/video frame captioner, audio transcription timeline, document page citations, long-context chunking | Upload bundle QA cites exact file/page/frame/time |

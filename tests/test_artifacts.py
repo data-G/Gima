@@ -89,6 +89,20 @@ class ChatArtifactEngineTests(unittest.TestCase):
         self.assertIn("I searched public web sources", answer.reply)
         self.assertEqual(answer.sources, ["https://example.com/current-ai"])
 
+    def test_web_search_strips_nul_bytes_before_writing_csv(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            engine = ChatArtifactEngine(root, [])
+            with patch.object(engine.importer, "search", return_value=["https://example.com/nul"]), patch.object(
+                engine.importer,
+                "fetch",
+                return_value="Current\x00 AI systems can search, cite, use tools, and create artifacts.",
+            ):
+                answer = engine.answer("search internet current AI systems")
+            self.assertIsNotNone(answer)
+            csv_file = next(Path(file["path"]) for file in answer.files if file["name"].endswith(".csv"))
+            self.assertNotIn("\x00", csv_file.read_text(encoding="utf-8"))
+
     def test_browse_url_imports_direct_public_page(self):
         with tempfile.TemporaryDirectory() as temp:
             engine = ChatArtifactEngine(Path(temp), [])

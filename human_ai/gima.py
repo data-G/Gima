@@ -343,10 +343,10 @@ def parser() -> argparse.ArgumentParser:
     commands.add_parser("model-levels", help="List configured local model levels")
 
     model_download = commands.add_parser("model-download", help="Download a configured local model level")
-    model_download.add_argument("level", choices=["tiny", "fast", "strong"])
+    model_download.add_argument("level")
 
     model_use = commands.add_parser("model-use", help="Switch Gima to a configured local model level")
-    model_use.add_argument("level", choices=["tiny", "fast", "strong"])
+    model_use.add_argument("level")
     model_use.add_argument("--restart", action="store_true", help="Restart the local brain after switching")
     return root
 
@@ -532,7 +532,7 @@ def _print_eval_results(rows) -> None:
 
 def _print_model_levels(manager: ModelLevelManager, active_level: str) -> None:
     for level in manager.levels():
-        marker = "active" if level.level == active_level else "ready" if level.available else "missing"
+        marker = f"active/{level.status}" if level.level == active_level else level.status
         print(f"- {level.level}: {level.name} [{marker}]")
         print(f"  model: {level.model}")
         print(f"  path: {level.model_path}")
@@ -774,6 +774,7 @@ def _shell_quote(value: str) -> str:
 def main(argv=None) -> int:
     args = parser().parse_args(argv)
     config = load_config(args.config)
+    setattr(config, "_config_path", args.config)
     load_secret_env(config.resolved_workspace)
     agent = Agent(config)
     brain = BrainServer(config, agent.memory)

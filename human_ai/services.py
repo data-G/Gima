@@ -1,6 +1,11 @@
 from __future__ import annotations
 
 import html
+import base64
+import csv
+import hashlib
+import hmac
+import importlib
 import mimetypes
 import ipaddress
 import json
@@ -21,7 +26,7 @@ from array import array
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from pathlib import Path
-from typing import Dict, Iterable, List
+from typing import Any, Dict, Iterable, List
 
 from .config import Config
 from .memory import MemoryStore
@@ -72,6 +77,22 @@ def _is_public_host(hostname: str) -> bool:
         if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
             return False
     return bool(addresses)
+
+
+def cloud_allowed() -> bool:
+    return os.environ.get("CLOUD_ALLOWED", "").strip().casefold() in {"1", "true", "yes", "on"}
+
+
+def require_cloud_allowed(action: str = "cloud AI request") -> None:
+    if not cloud_allowed():
+        raise PermissionError(
+            f"{action} is blocked because CLOUD_ALLOWED is not true. "
+            "Set CLOUD_ALLOWED=true only when you intentionally allow Gima to send this request to cloud APIs."
+        )
+
+
+def _http_header_value(value: str) -> str:
+    return str(value).encode("latin-1", errors="ignore").decode("latin-1")
 
 
 class WebImporter:
@@ -166,9 +187,224 @@ class WebImporter:
         return [url for url in body[3] if isinstance(url, str) and url.startswith("https://")]
 
 
+class OpenRouterCatalog:
+    endpoint = "https://openrouter.ai/api/v1/models"
+    default_routing = {
+        "routing_sort": "latency",
+        "data_collection": "deny",
+        "fallback_models": ["openrouter/auto", "openrouter/free"],
+        "auxiliary_models": {
+            "title": "openrouter/auto",
+            "vision": "openrouter/auto",
+            "compression": "openrouter/auto",
+            "web_summary": "openrouter/auto",
+        },
+        "pareto_min_coding_score": 0.65,
+        "human_in_loop": True,
+    }
+
+    def __init__(self, config: Config):
+        self.config = config
+        self.cache_dir = config.resolved_data_dir / "openrouter"
+        self.cache_path = self.cache_dir / "models_catalog.json"
+        self.selected_path = self.cache_dir / "selected_model.txt"
+        self.routing_path = self.cache_dir / "routing_config.json"
+
+    def models(
+        self,
+        *,
+        refresh: bool = False,
+        output_modalities: str = "all",
+        limit: int = 500,
+        query: str = "",
+    ) -> dict:
+        payload: dict[str, Any]
+        source = "cache"
+        if refresh or not self.cache_path.exists():
+            try:
+                payload = self._fetch(output_modalities=output_modalities)
+                source = "openrouter"
+            except Exception:
+                if not self.cache_path.exists():
+                    raise
+                payload = self._read_cache()
+                source = "cache_after_fetch_error"
+        else:
+            payload = self._read_cache()
+
+        rows = [self._normalize_model(row) for row in payload.get("data", []) if isinstance(row, dict)]
+        if query.strip():
+            needle = query.casefold().strip()
+            rows = [
+                row
+                for row in rows
+                if needle in row["id"].casefold()
+                or needle in row["name"].casefold()
+                or needle in row["provider"].casefold()
+                or needle in " ".join(row["output_modalities"]).casefold()
+            ]
+        rows.sort(key=lambda row: (not row["free"], row["provider"], row["id"]))
+        selected = self.selected_model()
+        return {
+            "source": source,
+            "cached": source.startswith("cache"),
+            "cache_path": str(self.cache_path),
+            "selected_model": selected,
+            "count": len(rows),
+            "returned": min(max(0, limit), len(rows)),
+            "models": rows[: max(0, limit)],
+        }
+
+    def select_model(self, model_id: str) -> str:
+        model_id = model_id.strip()
+        if not model_id or "/" not in model_id:
+            raise ValueError("OpenRouter model id is required, for example openai/gpt-4o")
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self.selected_path.write_text(model_id, encoding="utf-8")
+        return model_id
+
+    def routing_config(self) -> dict:
+        config = json.loads(json.dumps(self.default_routing))
+        if self.routing_path.exists():
+            try:
+                saved = json.loads(self.routing_path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                saved = {}
+            if isinstance(saved, dict):
+                for key, value in saved.items():
+                    if key == "auxiliary_models" and isinstance(value, dict):
+                        config[key].update({str(k): str(v).strip() for k, v in value.items() if str(v).strip()})
+                    elif key == "fallback_models" and isinstance(value, list):
+                        config[key] = [str(item).strip() for item in value if str(item).strip()]
+                    elif key in config:
+                        config[key] = value
+        config["selected_model"] = self.selected_model()
+        config["routing_path"] = str(self.routing_path)
+        return config
+
+    def save_routing_config(self, payload: dict) -> dict:
+        current = self.routing_config()
+        sort = str(payload.get("routing_sort", current["routing_sort"])).strip().casefold()
+        if sort not in {"price", "throughput", "latency"}:
+            raise ValueError("routing_sort must be price, throughput, or latency")
+        data_collection = str(payload.get("data_collection", current["data_collection"])).strip().casefold()
+        if data_collection not in {"deny", "allow"}:
+            raise ValueError("data_collection must be deny or allow")
+        fallbacks = payload.get("fallback_models", current["fallback_models"])
+        if isinstance(fallbacks, str):
+            fallbacks = [item.strip() for item in re.split(r"[\n,]+", fallbacks) if item.strip()]
+        if not isinstance(fallbacks, list):
+            raise ValueError("fallback_models must be a list or comma-separated string")
+        auxiliary = payload.get("auxiliary_models", current["auxiliary_models"])
+        if not isinstance(auxiliary, dict):
+            raise ValueError("auxiliary_models must be an object")
+        saved = {
+            "routing_sort": sort,
+            "data_collection": data_collection,
+            "fallback_models": [str(item).strip() for item in fallbacks if str(item).strip()],
+            "auxiliary_models": {str(k): str(v).strip() for k, v in auxiliary.items() if str(v).strip()},
+            "pareto_min_coding_score": float(payload.get("pareto_min_coding_score", current["pareto_min_coding_score"])),
+            "human_in_loop": payload.get("human_in_loop", current["human_in_loop"]) is not False,
+        }
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self.routing_path.write_text(json.dumps(saved, indent=2, sort_keys=True), encoding="utf-8")
+        saved["selected_model"] = self.selected_model()
+        saved["routing_path"] = str(self.routing_path)
+        return saved
+
+    def selected_model(self) -> str:
+        env_model = os.environ.get("GIMA_OPENROUTER_MODEL", "").strip()
+        if env_model:
+            return env_model
+        if self.selected_path.exists():
+            return self.selected_path.read_text(encoding="utf-8", errors="replace").strip()
+        return ""
+
+    def _fetch(self, *, output_modalities: str) -> dict:
+        params = urllib.parse.urlencode({"output_modalities": output_modalities or "all"})
+        headers = {
+            "Accept": "application/json",
+            "User-Agent": "Gima local assistant/0.1",
+        }
+        api_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+        request = urllib.request.Request(f"{self.endpoint}?{params}", headers=headers)
+        with urllib.request.urlopen(request, timeout=25) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self.cache_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+        return payload
+
+    def _read_cache(self) -> dict:
+        return json.loads(self.cache_path.read_text(encoding="utf-8"))
+
+    def _normalize_model(self, row: dict) -> dict:
+        model_id = str(row.get("id") or row.get("canonical_slug") or "").strip()
+        pricing = row.get("pricing") if isinstance(row.get("pricing"), dict) else {}
+        architecture = row.get("architecture") if isinstance(row.get("architecture"), dict) else {}
+        top_provider = row.get("top_provider") if isinstance(row.get("top_provider"), dict) else {}
+        input_modalities = self._string_list(
+            row.get("input_modalities") or architecture.get("input_modalities") or []
+        )
+        output_modalities = self._string_list(
+            row.get("output_modalities") or architecture.get("output_modalities") or []
+        )
+        supported_parameters = self._string_list(row.get("supported_parameters") or [])
+        prompt_price = str(pricing.get("prompt", ""))
+        completion_price = str(pricing.get("completion", ""))
+        return {
+            "id": model_id,
+            "name": str(row.get("name") or model_id),
+            "provider": model_id.split("/", 1)[0] if "/" in model_id else "",
+            "canonical_slug": str(row.get("canonical_slug") or model_id),
+            "context_length": row.get("context_length") or top_provider.get("context_length") or 0,
+            "modality": str(row.get("modality") or ""),
+            "input_modalities": input_modalities,
+            "output_modalities": output_modalities,
+            "supported_parameters": supported_parameters,
+            "pricing_prompt": prompt_price,
+            "pricing_completion": completion_price,
+            "pricing_image": str(pricing.get("image", "")),
+            "pricing_request": str(pricing.get("request", "")),
+            "created": row.get("created"),
+            "free": model_id.endswith(":free") or self._looks_free(prompt_price, completion_price),
+        }
+
+    def _looks_free(self, *prices: str) -> bool:
+        values = [price for price in prices if price not in {"", "None", None}]
+        if not values:
+            return False
+        try:
+            return all(float(price) == 0 for price in values)
+        except ValueError:
+            return False
+
+    def _string_list(self, value: Any) -> list[str]:
+        if not isinstance(value, list):
+            return []
+        return [str(item) for item in value if item is not None]
+
+
 class LocalModel:
     def __init__(self, config: Config):
         self.config = config.model
+
+    @staticmethod
+    def _clean_llama_channel_content(content: str) -> str:
+        text = content.strip()
+        if "<|channel>" not in text and "<channel|>" not in text:
+            return text
+
+        final_marker = "<|channel>final"
+        if final_marker in text:
+            text = text.rsplit(final_marker, 1)[-1]
+        elif "<channel|>" in text:
+            text = text.rsplit("<channel|>", 1)[-1]
+
+        text = re.sub(r"<\\|channel\\>\\w+\\s*", "", text)
+        text = text.replace("<channel|>", "")
+        return text.strip()
 
     def complete(
         self,
@@ -196,11 +432,15 @@ class LocalModel:
         timeout = timeout_seconds if timeout_seconds is not None else self.config.timeout_seconds
         with urllib.request.urlopen(request, timeout=timeout) as response:
             body = json.loads(response.read().decode("utf-8"))
-        return body["choices"][0]["message"]["content"].strip()
+        content = body["choices"][0]["message"].get("content", "")
+        if not isinstance(content, str):
+            return ""
+        return self._clean_llama_channel_content(content)
 
 
 class TeacherModelClient:
     def __init__(self, config: Config):
+        self.root_config = config
         self.config = config.teacher_models
 
     def available(self, provider: str) -> bool:
@@ -221,6 +461,9 @@ class TeacherModelClient:
 
     def ask(self, provider: str, prompt: str) -> str:
         provider = provider.casefold().strip()
+        if provider not in {"chatgpt", "openai", "gemini", "anthropic", "claude", "xai", "grok", "deepseek", "openrouter"}:
+            raise ValueError("Provider must be local, chatgpt, openai, gemini, anthropic, xai, deepseek, or openrouter")
+        require_cloud_allowed(f"{provider} teacher model request")
         if provider in {"chatgpt", "openai"}:
             return self._ask_openai(prompt)
         if provider == "gemini":
@@ -316,6 +559,7 @@ class TeacherModelClient:
     def _ask_openrouter(self, prompt: str) -> str:
         api_key = os.environ.get("OPENROUTER_API_KEY", "")
         models = self._openrouter_model_candidates()
+        extra_body = self._openrouter_extra_body()
         failures: List[str] = []
         for model in models:
             try:
@@ -328,6 +572,7 @@ class TeacherModelClient:
                         "HTTP-Referer": "http://127.0.0.1:8787",
                         "X-Title": "Gima local assistant",
                     },
+                    extra_body=extra_body,
                 )
                 return answer if model == self.config.openrouter_model else f"{answer}\n\n[OpenRouter model used: {model}]"
             except urllib.error.HTTPError as error:
@@ -343,13 +588,36 @@ class TeacherModelClient:
         raise RuntimeError("OpenRouter did not answer. " + "; ".join(failures))
 
     def _openrouter_model_candidates(self) -> List[str]:
+        selected = self._selected_openrouter_model()
         configured = [part.strip() for part in self.config.openrouter_model.split(",") if part.strip()]
-        fallbacks = ["openai/gpt-5.5", "openai/gpt-4o", "openai/gpt-4.1"]
+        routing = OpenRouterCatalog(self.root_config).routing_config()
+        fallbacks = [str(item).strip() for item in routing.get("fallback_models", []) if str(item).strip()]
+        fallbacks += ["openrouter/free", "openai/gpt-5.5", "openai/gpt-4o", "openai/gpt-4.1"]
         models: List[str] = []
-        for model in configured + fallbacks:
+        for model in ([selected] if selected else []) + configured + fallbacks:
             if model not in models:
                 models.append(model)
         return models
+
+    def _selected_openrouter_model(self) -> str:
+        return OpenRouterCatalog(self.root_config).selected_model()
+
+    def _openrouter_extra_body(self) -> dict:
+        routing = OpenRouterCatalog(self.root_config).routing_config()
+        body: dict[str, Any] = {
+            "provider": {
+                "sort": routing.get("routing_sort", "latency"),
+                "data_collection": routing.get("data_collection", "deny"),
+            }
+        }
+        if any(model == "openrouter/pareto-code" for model in self._openrouter_model_candidates()):
+            body["plugins"] = [
+                {
+                    "id": "pareto-code",
+                    "min_coding_score": float(routing.get("pareto_min_coding_score", 0.65)),
+                }
+            ]
+        return body
 
     def _ask_gemini(self, prompt: str) -> str:
         api_key = os.environ.get("GEMINI_API_KEY", "")
@@ -417,23 +685,27 @@ class TeacherModelClient:
         prompt: str,
         *,
         extra_headers: Dict[str, str] | None = None,
+        extra_body: Dict[str, Any] | None = None,
     ) -> str:
         if not api_key:
             raise RuntimeError(f"API key is not set for {url}")
+        body = {
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.2,
+            "max_tokens": 600,
+        }
+        if extra_body:
+            body.update(extra_body)
         payload = json.dumps(
-            {
-                "model": model,
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.2,
-                "max_tokens": 600,
-            }
+            body
         ).encode("utf-8")
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
         }
         if extra_headers:
-            headers.update(extra_headers)
+            headers.update({key: _http_header_value(value) for key, value in extra_headers.items()})
         request = urllib.request.Request(url, data=payload, headers=headers, method="POST")
         with urllib.request.urlopen(request, timeout=min(40, self.config.timeout_seconds)) as response:
             body = json.loads(response.read().decode("utf-8"))
@@ -630,6 +902,20 @@ class OpenSourceVideoApiProject:
     prompt_path: Path
 
 
+@dataclass(frozen=True)
+class OpenSourceVideoApiTarget:
+    provider_id: str
+    name: str
+    backend: str
+    source_url: str
+    base_url: str
+    auth_env: str
+    requires_cloud_allowed: bool
+    requires_explicit_consent: bool
+    purpose: str
+    safety_notes: List[str]
+
+
 @dataclass
 class NeuralLipSyncProject:
     project_dir: Path
@@ -656,6 +942,14 @@ class FrontierVideoPlan:
 
 @dataclass
 class SongSketchProject:
+    project_dir: Path
+    output_path: Path
+    manifest_path: Path
+    prompt_path: Path
+
+
+@dataclass
+class ExternalMusicApiProject:
     project_dir: Path
     output_path: Path
     manifest_path: Path
@@ -1227,6 +1521,836 @@ class LocalImageMusicVideoRenderer:
         return 1280, 720
 
 
+class OpenAIImageGenerator:
+    def __init__(self, output_dir: Path):
+        self.output_dir = output_dir
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+
+    def generate(
+        self,
+        prompt: str,
+        *,
+        model: str = "gpt-image-2",
+        size: str = "1024x1024",
+        quality: str = "auto",
+        consent: bool = False,
+    ) -> dict[str, str]:
+        prompt = prompt.strip()
+        if not consent:
+            raise PermissionError("OpenAI image generation requires confirmation that you have rights/consent for the request")
+        require_cloud_allowed("OpenAI image generation")
+        if not prompt:
+            raise ValueError("Image prompt is required")
+        api_key = os.environ.get("OPENAI_API_KEY", "").strip()
+        if not api_key:
+            raise RuntimeError("OPENAI_API_KEY is not set. Save ChatGPT / OpenAI in API Bindings first.")
+        project_dir = self.output_dir / f"openai_image_{uuid.uuid4().hex[:12]}"
+        project_dir.mkdir(parents=True, exist_ok=True)
+        output_path = project_dir / "generated_image.png"
+        manifest_path = project_dir / "manifest.json"
+        prompt_path = project_dir / "prompt.txt"
+        prompt_path.write_text(prompt + "\n", encoding="utf-8")
+        payload = {
+            "model": model,
+            "prompt": prompt,
+            "size": size,
+            "quality": quality,
+            "n": 1,
+        }
+        request = urllib.request.Request(
+            "https://api.openai.com/v1/images/generations",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=180) as response:
+            body = json.loads(response.read().decode("utf-8"))
+        image_rows = body.get("data") or []
+        if not image_rows:
+            raise RuntimeError("OpenAI image generation returned no image data")
+        first = image_rows[0]
+        revised_prompt = str(first.get("revised_prompt") or "")
+        if first.get("b64_json"):
+            output_path.write_bytes(base64.b64decode(first["b64_json"]))
+        elif first.get("url"):
+            image_request = urllib.request.Request(first["url"], headers={"User-Agent": "Gima local assistant/0.1"})
+            with urllib.request.urlopen(image_request, timeout=120) as image_response:
+                output_path.write_bytes(image_response.read())
+        else:
+            raise RuntimeError("OpenAI image generation returned neither b64_json nor url")
+        manifest = {
+            "provider": "openai",
+            "api": "images.generations",
+            "model": model,
+            "size": size,
+            "quality": quality,
+            "prompt": prompt,
+            "revised_prompt": revised_prompt,
+            "output_path": str(output_path),
+            "prompt_path": str(prompt_path),
+            "rights_note": "Generated only after user confirmation of rights/consent.",
+        }
+        manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
+        return {
+            "output_path": str(output_path),
+            "manifest_path": str(manifest_path),
+            "prompt_path": str(prompt_path),
+            "model": model,
+            "size": size,
+            "quality": quality,
+            "revised_prompt": revised_prompt,
+        }
+
+
+class HuggingFaceImageGenerator:
+    """Hugging Face InferenceClient text-to-image adapter."""
+
+    def __init__(self, output_dir: Path | str):
+        self.output_dir = Path(output_dir).expanduser().resolve()
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.index_path = self.output_dir / "whatsapp_messages.jsonl"
+        self.index_path = self.output_dir / "whatsapp_messages.jsonl"
+
+    def status(self) -> dict[str, object]:
+        return {
+            "provider": "huggingface",
+            "backend": "huggingface_hub.InferenceClient.text_to_image",
+            "ready": bool(self._hf_token()),
+            "cloud_allowed": cloud_allowed(),
+            "default_provider": os.environ.get("GIMA_HF_IMAGE_PROVIDER", "wavespeed"),
+            "default_model": os.environ.get("GIMA_HF_IMAGE_MODEL", "black-forest-labs/FLUX.1-dev"),
+            "env": ["HF_TOKEN or HUGGINGFACE_API_KEY", "CLOUD_ALLOWED=true"],
+            "safety": [
+                "Requires explicit consent because provider inference may spend credits.",
+                "Use only prompts, images, likenesses, and references you own or have permission to use.",
+                "Gima stores output and manifest locally; it never exposes the token to the browser.",
+            ],
+        }
+
+    def generate(
+        self,
+        prompt: str,
+        *,
+        model: str = "black-forest-labs/FLUX.1-dev",
+        provider: str = "wavespeed",
+        consent: bool = False,
+    ) -> dict[str, object]:
+        prompt = " ".join(prompt.strip().split())
+        if not consent:
+            raise PermissionError("Hugging Face image generation can spend credits and requires explicit consent")
+        require_cloud_allowed("Hugging Face text-to-image generation")
+        if not prompt:
+            raise ValueError("Image prompt is required")
+        token = self._hf_token()
+        if not token:
+            raise RuntimeError("HF_TOKEN or HUGGINGFACE_API_KEY is not set")
+        project_dir = self.output_dir / f"huggingface_image_{uuid.uuid4().hex[:12]}"
+        project_dir.mkdir(parents=True, exist_ok=True)
+        output_path = project_dir / "output_huggingface_image.png"
+        prompt_path = project_dir / "prompt.txt"
+        manifest_path = project_dir / "manifest.json"
+        prompt_path.write_text(prompt + "\n", encoding="utf-8")
+        try:
+            hub = importlib.import_module("huggingface_hub")
+        except ImportError as error:
+            raise RuntimeError("Install huggingface_hub to use Hugging Face image generation: pip install huggingface_hub") from error
+        client = hub.InferenceClient(provider=provider, api_key=token)
+        image = client.text_to_image(prompt, model=model)
+        self._write_image_result(image, output_path)
+        manifest = {
+            "kind": "huggingface_text_to_image",
+            "status": "generated",
+            "provider": "huggingface",
+            "inference_provider": provider,
+            "model": model,
+            "prompt": prompt,
+            "output": str(output_path),
+            "prompt_path": str(prompt_path),
+            "response_type": type(image).__name__,
+            "safety": [
+                "This cloud image job can spend Hugging Face/provider credits.",
+                "Use only prompts, likenesses, images, and references you own or have permission to use.",
+                "Label generated or AI-assisted images when sharing.",
+            ],
+        }
+        manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
+        return {
+            "status": "generated",
+            "provider": "huggingface",
+            "inference_provider": provider,
+            "model": model,
+            "output_path": str(output_path),
+            "manifest_path": str(manifest_path),
+            "prompt_path": str(prompt_path),
+        }
+
+    def _write_image_result(self, image: object, output_path: Path) -> None:
+        if isinstance(image, bytes):
+            output_path.write_bytes(image)
+            return
+        if isinstance(image, bytearray):
+            output_path.write_bytes(bytes(image))
+            return
+        if hasattr(image, "save"):
+            image.save(output_path)
+            return
+        if hasattr(image, "read"):
+            data = image.read()
+            if isinstance(data, str):
+                data = data.encode("utf-8")
+            output_path.write_bytes(bytes(data))
+            return
+        if isinstance(image, (str, Path)):
+            value = str(image)
+            if value.startswith(("https://", "http://")):
+                request = urllib.request.Request(value, headers={"User-Agent": "Gima local assistant/0.1"})
+                with urllib.request.urlopen(request, timeout=180) as response:
+                    output_path.write_bytes(response.read())
+                return
+            source = Path(value).expanduser().resolve()
+            if source.exists() and source.is_file():
+                shutil.copy2(source, output_path)
+                return
+        if isinstance(image, dict):
+            for key in ("image", "image_base64", "png", "data"):
+                value = image.get(key)
+                if isinstance(value, str) and value.strip():
+                    text = value.strip()
+                    if text.startswith("data:") and "," in text:
+                        text = text.split(",", 1)[1]
+                    try:
+                        output_path.write_bytes(base64.b64decode(text))
+                        return
+                    except Exception:
+                        pass
+            for key in ("url", "image_url", "download_url", "file"):
+                value = image.get(key)
+                if isinstance(value, str) and value.startswith(("https://", "http://")):
+                    request = urllib.request.Request(value, headers={"User-Agent": "Gima local assistant/0.1"})
+                    with urllib.request.urlopen(request, timeout=180) as response:
+                        output_path.write_bytes(response.read())
+                    return
+        raise RuntimeError(f"Hugging Face text_to_image returned unsupported type: {type(image).__name__}")
+
+    def _hf_token(self) -> str:
+        return os.environ.get("HF_TOKEN", "").strip() or os.environ.get("HUGGINGFACE_API_KEY", "").strip()
+
+
+class HuggingFaceFeatureExtractor:
+    """Hugging Face InferenceClient feature-extraction adapter."""
+
+    def __init__(self, output_dir: Path | str):
+        self.output_dir = Path(output_dir).expanduser().resolve()
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+
+    def status(self) -> dict[str, object]:
+        return {
+            "provider": "huggingface",
+            "backend": "huggingface_hub.InferenceClient.feature_extraction",
+            "ready": bool(self._hf_token()),
+            "cloud_allowed": cloud_allowed(),
+            "default_provider": os.environ.get("GIMA_HF_FEATURE_PROVIDER", "hf-inference"),
+            "default_model": os.environ.get("GIMA_HF_FEATURE_MODEL", "microsoft/harrier-oss-v1-0.6b"),
+            "env": ["HF_TOKEN or HUGGINGFACE_API_KEY", "CLOUD_ALLOWED=true"],
+            "safety": [
+                "Requires explicit consent because text is sent to Hugging Face/provider inference.",
+                "Use for public or approved text only unless you intentionally allow cloud processing.",
+                "Gima stores feature vectors locally; it never exposes the token to the browser.",
+            ],
+        }
+
+    def extract(
+        self,
+        text: str,
+        *,
+        model: str = "microsoft/harrier-oss-v1-0.6b",
+        provider: str = "hf-inference",
+        consent: bool = False,
+    ) -> dict[str, object]:
+        clean_text = " ".join(text.strip().split())
+        if not consent:
+            raise PermissionError("Hugging Face feature extraction requires explicit consent")
+        require_cloud_allowed("Hugging Face feature extraction")
+        if not clean_text:
+            raise ValueError("Feature extraction text is required")
+        token = self._hf_token()
+        if not token:
+            raise RuntimeError("HF_TOKEN or HUGGINGFACE_API_KEY is not set")
+        project_dir = self.output_dir / f"huggingface_features_{uuid.uuid4().hex[:12]}"
+        project_dir.mkdir(parents=True, exist_ok=True)
+        input_path = project_dir / "input.txt"
+        features_path = project_dir / "features.json"
+        csv_path = project_dir / "features.csv"
+        manifest_path = project_dir / "manifest.json"
+        input_path.write_text(clean_text + "\n", encoding="utf-8")
+        try:
+            hub = importlib.import_module("huggingface_hub")
+        except ImportError as error:
+            raise RuntimeError("Install huggingface_hub to use Hugging Face feature extraction: pip install huggingface_hub") from error
+        client = hub.InferenceClient(provider=provider, api_key=token)
+        result = client.feature_extraction(clean_text, model=model)
+        serializable = self._to_serializable(result)
+        features_path.write_text(json.dumps(serializable, indent=2, ensure_ascii=False), encoding="utf-8")
+        stats = self._write_feature_csv(csv_path, serializable)
+        manifest = {
+            "kind": "huggingface_feature_extraction",
+            "status": "generated",
+            "provider": "huggingface",
+            "inference_provider": provider,
+            "model": model,
+            "input_path": str(input_path),
+            "features_path": str(features_path),
+            "csv_path": str(csv_path),
+            "stats": stats,
+            "safety": [
+                "This cloud feature-extraction job can spend Hugging Face/provider credits.",
+                "Do not send private text unless CLOUD_ALLOWED=true was set intentionally.",
+                "Feature vectors are saved locally for review before being connected to Gima retrieval.",
+            ],
+        }
+        manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
+        return {
+            "status": "generated",
+            "provider": "huggingface",
+            "inference_provider": provider,
+            "model": model,
+            "input_path": str(input_path),
+            "features_path": str(features_path),
+            "csv_path": str(csv_path),
+            "manifest_path": str(manifest_path),
+            "stats": stats,
+        }
+
+    def _to_serializable(self, value: object) -> object:
+        if hasattr(value, "tolist"):
+            return value.tolist()
+        if isinstance(value, tuple):
+            return [self._to_serializable(item) for item in value]
+        if isinstance(value, list):
+            return [self._to_serializable(item) for item in value]
+        if isinstance(value, dict):
+            return {str(key): self._to_serializable(item) for key, item in value.items()}
+        if isinstance(value, (int, float, str, bool)) or value is None:
+            return value
+        return str(value)
+
+    def _write_feature_csv(self, path: Path, value: object) -> dict[str, object]:
+        numbers: list[float] = []
+        self._collect_numbers(value, numbers)
+        with path.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=["index", "value"])
+            writer.writeheader()
+            for index, number in enumerate(numbers[:4096]):
+                writer.writerow({"index": index, "value": number})
+        if not numbers:
+            return {"count": 0, "preview_count": 0}
+        return {
+            "count": len(numbers),
+            "preview_count": min(len(numbers), 4096),
+            "min": min(numbers),
+            "max": max(numbers),
+            "mean": sum(numbers) / len(numbers),
+        }
+
+    def _collect_numbers(self, value: object, output: list[float]) -> None:
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            output.append(float(value))
+        elif isinstance(value, list):
+            for item in value:
+                self._collect_numbers(item, output)
+        elif isinstance(value, dict):
+            for item in value.values():
+                self._collect_numbers(item, output)
+
+    def _hf_token(self) -> str:
+        return os.environ.get("HF_TOKEN", "").strip() or os.environ.get("HUGGINGFACE_API_KEY", "").strip()
+
+
+class TransformersTextGenerator:
+    """Local Hugging Face Transformers text-generation adapter."""
+
+    def __init__(self, output_dir: Path | str):
+        self.output_dir = Path(output_dir).expanduser().resolve()
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+
+    def status(self) -> dict[str, object]:
+        installed = importlib.util.find_spec("transformers") is not None and importlib.util.find_spec("torch") is not None
+        return {
+            "provider": "local",
+            "backend": "transformers.pipeline(text-generation)",
+            "installed": installed,
+            "ready": installed,
+            "default_model": os.environ.get("GIMA_TRANSFORMERS_MODEL", "google/gemma-2-2b-it"),
+            "default_device": os.environ.get("GIMA_TRANSFORMERS_DEVICE", "auto"),
+            "local_files_only_default": self._env_bool("GIMA_TRANSFORMERS_LOCAL_FILES_ONLY", True),
+            "env": [
+                "Optional: GIMA_TRANSFORMERS_MODEL=google/gemma-2-2b-it",
+                "Optional: GIMA_TRANSFORMERS_DEVICE=auto|mps|cuda|cpu",
+                "Optional: GIMA_TRANSFORMERS_LOCAL_FILES_ONLY=false to allow first-time model download",
+            ],
+            "safety": [
+                "Runs the model locally after it is available in the Transformers cache.",
+                "Model download can be large; Gima requires explicit consent before loading or downloading.",
+                "Use local_files_only=true when you do not want network access.",
+            ],
+        }
+
+    def generate(
+        self,
+        prompt: str,
+        *,
+        model: str = "google/gemma-2-2b-it",
+        device: str = "auto",
+        max_new_tokens: int = 256,
+        local_files_only: bool = True,
+        consent: bool = False,
+    ) -> dict[str, object]:
+        clean_prompt = " ".join(prompt.strip().split())
+        if not consent:
+            raise PermissionError("Local Transformers generation requires consent because model loading can be slow or download large files")
+        if not clean_prompt:
+            raise ValueError("Prompt is required")
+        model = (model or "google/gemma-2-2b-it").strip()
+        device = (device or "auto").strip().lower()
+        max_new_tokens = max(1, min(int(max_new_tokens or 256), 2048))
+        project_dir = self.output_dir / f"transformers_text_{uuid.uuid4().hex[:12]}"
+        project_dir.mkdir(parents=True, exist_ok=True)
+        prompt_path = project_dir / "prompt.txt"
+        response_path = project_dir / "response.txt"
+        manifest_path = project_dir / "manifest.json"
+        prompt_path.write_text(clean_prompt + "\n", encoding="utf-8")
+        try:
+            torch = importlib.import_module("torch")
+            transformers = importlib.import_module("transformers")
+        except ImportError as error:
+            raise RuntimeError("Install torch and transformers to use local Transformers chat: pip install torch transformers") from error
+
+        selected_device = self._select_device(torch, device)
+        dtype = self._select_dtype(torch, selected_device)
+        model_kwargs: dict[str, object] = {"local_files_only": bool(local_files_only)}
+        if dtype is not None:
+            model_kwargs["torch_dtype"] = dtype
+        pipe = transformers.pipeline(
+            "text-generation",
+            model=model,
+            model_kwargs=model_kwargs,
+            device=selected_device,
+        )
+        messages = [{"role": "user", "content": clean_prompt}]
+        outputs = pipe(messages, max_new_tokens=max_new_tokens)
+        answer = self._extract_answer(outputs)
+        response_path.write_text(answer + "\n", encoding="utf-8")
+        manifest = {
+            "kind": "local_transformers_text_generation",
+            "status": "generated",
+            "provider": "local",
+            "backend": "transformers.pipeline",
+            "model": model,
+            "device": selected_device,
+            "max_new_tokens": max_new_tokens,
+            "local_files_only": bool(local_files_only),
+            "prompt_path": str(prompt_path),
+            "response_path": str(response_path),
+            "response_preview": answer[:500],
+            "safety": [
+                "Model runs locally after files are present in the local cache.",
+                "If local_files_only=false, Transformers may download model files from Hugging Face.",
+                "Large models can be slow on CPU and may require more RAM than this Mac has available.",
+            ],
+        }
+        manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
+        return {
+            "status": "generated",
+            "provider": "local",
+            "model": model,
+            "device": selected_device,
+            "answer": answer,
+            "prompt_path": str(prompt_path),
+            "response_path": str(response_path),
+            "manifest_path": str(manifest_path),
+            "local_files_only": bool(local_files_only),
+        }
+
+    def _select_device(self, torch: object, requested: str) -> str:
+        if requested and requested != "auto":
+            return requested
+        cuda = getattr(torch, "cuda", None)
+        if cuda is not None and callable(getattr(cuda, "is_available", None)) and cuda.is_available():
+            return "cuda"
+        backends = getattr(torch, "backends", None)
+        mps = getattr(backends, "mps", None) if backends is not None else None
+        if mps is not None and callable(getattr(mps, "is_available", None)) and mps.is_available():
+            return "mps"
+        return "cpu"
+
+    def _select_dtype(self, torch: object, device: str) -> object | None:
+        if device in {"cuda", "mps"}:
+            return getattr(torch, "bfloat16", None)
+        return None
+
+    def _extract_answer(self, outputs: object) -> str:
+        try:
+            first = outputs[0]  # type: ignore[index]
+            generated = first.get("generated_text") if isinstance(first, dict) else first
+            if isinstance(generated, list) and generated:
+                last = generated[-1]
+                if isinstance(last, dict):
+                    return str(last.get("content", "")).strip()
+                return str(last).strip()
+            if isinstance(generated, str):
+                return generated.strip()
+        except Exception:
+            pass
+        return str(outputs).strip()
+
+    def _env_bool(self, name: str, default: bool) -> bool:
+        value = os.environ.get(name)
+        if value is None:
+            return default
+        return value.strip().casefold() in {"1", "true", "yes", "on"}
+
+
+class WhatsAppMessenger:
+    """Official WhatsApp Cloud API helper plus local wa.me draft links."""
+
+    graph_base_url = "https://graph.facebook.com/v20.0"
+
+    def __init__(self, output_dir: Path | str):
+        self.output_dir = Path(output_dir).expanduser().resolve()
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.index_path = self.output_dir / "whatsapp_messages.jsonl"
+
+    def status(self) -> dict[str, object]:
+        return {
+            "provider": "whatsapp",
+            "backend": "Meta WhatsApp Cloud API",
+            "ready": bool(self._token() and self._phone_number_id()),
+            "cloud_allowed": cloud_allowed(),
+            "draft_links_available": True,
+            "inbox_count": len(self.search_messages(limit=10000)["messages"]),
+            "webhook_verify_configured": bool(self._webhook_verify_token()),
+            "webhook_signature_configured": bool(self._app_secret()),
+            "env": [
+                "WHATSAPP_CLOUD_TOKEN",
+                "WHATSAPP_PHONE_NUMBER_ID",
+                "WHATSAPP_WEBHOOK_VERIFY_TOKEN for Meta webhook setup",
+                "Optional: WHATSAPP_APP_SECRET for webhook signature verification",
+                "CLOUD_ALLOWED=true for sending",
+            ],
+            "safety": [
+                "Draft links are local and open WhatsApp/WhatsApp Web for user review.",
+                "Direct sending uses only the official WhatsApp Cloud API.",
+                "Inbound retrieval uses official webhook events saved locally by Gima.",
+                "Gima requires explicit consent and will not spam or bypass WhatsApp limits.",
+            ],
+        }
+
+    def draft_link(self, to: str, message: str) -> dict[str, object]:
+        recipient = self._normalize_recipient(to)
+        clean_message = self._clean_message(message)
+        link = f"https://wa.me/{recipient}?text={urllib.parse.quote(clean_message)}"
+        project_dir = self.output_dir / f"whatsapp_draft_{uuid.uuid4().hex[:12]}"
+        project_dir.mkdir(parents=True, exist_ok=True)
+        message_path = project_dir / "message.txt"
+        manifest_path = project_dir / "manifest.json"
+        message_path.write_text(clean_message + "\n", encoding="utf-8")
+        manifest = {
+            "kind": "whatsapp_message_draft",
+            "status": "drafted",
+            "provider": "whatsapp",
+            "recipient": recipient,
+            "message_path": str(message_path),
+            "wa_me_link": link,
+            "safety": [
+                "Draft link requires the user to review and send in WhatsApp.",
+                "Use only with contacts who expect your message.",
+            ],
+        }
+        manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
+        self._record_message(
+            direction="draft",
+            contact=recipient,
+            text=clean_message,
+            source="wa.me",
+            manifest_path=manifest_path,
+            message_path=message_path,
+            metadata={"wa_me_link": link},
+        )
+        return {
+            "status": "drafted",
+            "provider": "whatsapp",
+            "recipient": recipient,
+            "message": clean_message,
+            "wa_me_link": link,
+            "message_path": str(message_path),
+            "manifest_path": str(manifest_path),
+        }
+
+    def send_text(self, to: str, message: str, *, consent: bool = False) -> dict[str, object]:
+        if not consent:
+            raise PermissionError("WhatsApp sending requires explicit consent")
+        require_cloud_allowed("WhatsApp Cloud API message sending")
+        recipient = self._normalize_recipient(to)
+        clean_message = self._clean_message(message)
+        token = self._token()
+        phone_number_id = self._phone_number_id()
+        if not token or not phone_number_id:
+            raise RuntimeError("WHATSAPP_CLOUD_TOKEN and WHATSAPP_PHONE_NUMBER_ID are required for direct sending")
+        project_dir = self.output_dir / f"whatsapp_sent_{uuid.uuid4().hex[:12]}"
+        project_dir.mkdir(parents=True, exist_ok=True)
+        message_path = project_dir / "message.txt"
+        response_path = project_dir / "response.json"
+        manifest_path = project_dir / "manifest.json"
+        message_path.write_text(clean_message + "\n", encoding="utf-8")
+        payload = {
+            "messaging_product": "whatsapp",
+            "recipient_type": "individual",
+            "to": recipient,
+            "type": "text",
+            "text": {"preview_url": False, "body": clean_message},
+        }
+        request = urllib.request.Request(
+            f"{self.graph_base_url}/{urllib.parse.quote(phone_number_id)}/messages",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=60) as response:
+            body = json.loads(response.read().decode("utf-8"))
+        response_path.write_text(json.dumps(body, indent=2, sort_keys=True), encoding="utf-8")
+        manifest = {
+            "kind": "whatsapp_cloud_text_message",
+            "status": "sent",
+            "provider": "whatsapp",
+            "recipient": recipient,
+            "phone_number_id": phone_number_id,
+            "message_path": str(message_path),
+            "response_path": str(response_path),
+            "safety": [
+                "Sent through the official WhatsApp Cloud API after explicit user consent.",
+                "Do not use for spam, harassment, credential requests, or messages to people who did not expect contact.",
+            ],
+        }
+        manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
+        self._record_message(
+            direction="outbound",
+            contact=recipient,
+            text=clean_message,
+            source="whatsapp_cloud_api",
+            manifest_path=manifest_path,
+            message_path=message_path,
+            metadata={"api_response": body, "response_path": str(response_path)},
+        )
+        return {
+            "status": "sent",
+            "provider": "whatsapp",
+            "recipient": recipient,
+            "message_path": str(message_path),
+            "response_path": str(response_path),
+            "manifest_path": str(manifest_path),
+            "api_response": body,
+        }
+
+    def record_webhook(self, payload: dict[str, object], *, signature: str = "", raw_body: bytes = b"") -> dict[str, object]:
+        if self._app_secret() and not self.verify_signature(raw_body, signature):
+            raise PermissionError("WhatsApp webhook signature verification failed")
+        project_dir = self.output_dir / f"whatsapp_webhook_{uuid.uuid4().hex[:12]}"
+        project_dir.mkdir(parents=True, exist_ok=True)
+        webhook_path = project_dir / "webhook.json"
+        webhook_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+        messages = self._extract_webhook_messages(payload)
+        recorded: list[dict[str, object]] = []
+        for message in messages:
+            message_path = project_dir / f"message_{len(recorded) + 1}.txt"
+            text = str(message.get("text", "")).strip()
+            message_path.write_text(text + "\n", encoding="utf-8")
+            manifest_path = project_dir / f"manifest_{len(recorded) + 1}.json"
+            manifest = {
+                "kind": "whatsapp_inbound_message",
+                "status": "received",
+                "provider": "whatsapp",
+                "direction": "inbound",
+                "contact": message.get("from", ""),
+                "message_id": message.get("message_id", ""),
+                "timestamp": message.get("timestamp", ""),
+                "message_type": message.get("message_type", ""),
+                "text": text,
+                "message_path": str(message_path),
+                "webhook_path": str(webhook_path),
+            }
+            manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
+            row = self._record_message(
+                direction="inbound",
+                contact=str(message.get("from", "")),
+                text=text,
+                source="whatsapp_webhook",
+                manifest_path=manifest_path,
+                message_path=message_path,
+                metadata=manifest,
+            )
+            recorded.append(row)
+        return {
+            "status": "received",
+            "provider": "whatsapp",
+            "webhook_path": str(webhook_path),
+            "received_count": len(recorded),
+            "messages": recorded,
+        }
+
+    def search_messages(self, query: str = "", *, limit: int = 20, direction: str = "all") -> dict[str, object]:
+        limit = max(1, min(int(limit or 20), 200))
+        direction = (direction or "all").strip().casefold()
+        query = " ".join(str(query or "").casefold().split())
+        rows = self._read_index()
+        filtered: list[dict[str, object]] = []
+        for row in reversed(rows):
+            if direction != "all" and str(row.get("direction", "")).casefold() != direction:
+                continue
+            haystack = " ".join(
+                str(row.get(key, ""))
+                for key in ("direction", "contact", "text", "source", "message_id", "timestamp")
+            ).casefold()
+            if query and query not in haystack:
+                continue
+            filtered.append(row)
+            if len(filtered) >= limit:
+                break
+        return {
+            "status": "ok",
+            "provider": "whatsapp",
+            "count": len(filtered),
+            "messages": filtered,
+            "index_path": str(self.index_path),
+        }
+
+    def verify_signature(self, raw_body: bytes, signature: str) -> bool:
+        secret = self._app_secret()
+        if not secret:
+            return True
+        if not signature.startswith("sha256="):
+            return False
+        expected = "sha256=" + hmac.new(secret.encode("utf-8"), raw_body, hashlib.sha256).hexdigest()
+        return hmac.compare_digest(expected, signature)
+
+    def _normalize_recipient(self, to: str) -> str:
+        recipient = re.sub(r"[^\d+]", "", str(to).strip())
+        if recipient.startswith("+"):
+            recipient = recipient[1:]
+        if not re.fullmatch(r"\d{8,15}", recipient):
+            raise ValueError("WhatsApp recipient must be an international phone number, for example +94771234567")
+        return recipient
+
+    def _clean_message(self, message: str) -> str:
+        clean_message = str(message).strip()
+        if not clean_message:
+            raise ValueError("WhatsApp message is required")
+        if len(clean_message) > 4096:
+            raise ValueError("WhatsApp message is too long; keep it under 4096 characters")
+        return clean_message
+
+    def _extract_webhook_messages(self, payload: dict[str, object]) -> list[dict[str, object]]:
+        found: list[dict[str, object]] = []
+        entries = payload.get("entry", [])
+        if not isinstance(entries, list):
+            return found
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            changes = entry.get("changes", [])
+            if not isinstance(changes, list):
+                continue
+            for change in changes:
+                if not isinstance(change, dict):
+                    continue
+                value = change.get("value", {})
+                if not isinstance(value, dict):
+                    continue
+                messages = value.get("messages", [])
+                if not isinstance(messages, list):
+                    continue
+                for item in messages:
+                    if not isinstance(item, dict):
+                        continue
+                    message_type = str(item.get("type", "unknown"))
+                    text = ""
+                    if message_type == "text" and isinstance(item.get("text"), dict):
+                        text = str(item["text"].get("body", ""))
+                    else:
+                        text = f"[{message_type} message received]"
+                    found.append(
+                        {
+                            "from": str(item.get("from", "")),
+                            "message_id": str(item.get("id", "")),
+                            "timestamp": str(item.get("timestamp", "")),
+                            "message_type": message_type,
+                            "text": text,
+                        }
+                    )
+        return found
+
+    def _record_message(
+        self,
+        *,
+        direction: str,
+        contact: str,
+        text: str,
+        source: str,
+        manifest_path: Path,
+        message_path: Path,
+        metadata: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        row = {
+            "id": uuid.uuid4().hex,
+            "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "provider": "whatsapp",
+            "direction": direction,
+            "contact": contact,
+            "text": text,
+            "source": source,
+            "manifest_path": str(manifest_path),
+            "message_path": str(message_path),
+            "message_id": str((metadata or {}).get("message_id", "")),
+            "timestamp": str((metadata or {}).get("timestamp", "")),
+        }
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        with self.index_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
+        return row
+
+    def _read_index(self) -> list[dict[str, object]]:
+        if not self.index_path.exists():
+            return []
+        rows: list[dict[str, object]] = []
+        for line in self.index_path.read_text(encoding="utf-8", errors="replace").splitlines():
+            if not line.strip():
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(row, dict):
+                rows.append(row)
+        return rows
+
+    def _token(self) -> str:
+        return os.environ.get("WHATSAPP_CLOUD_TOKEN", "").strip()
+
+    def _phone_number_id(self) -> str:
+        return os.environ.get("WHATSAPP_PHONE_NUMBER_ID", "").strip()
+
+    def _webhook_verify_token(self) -> str:
+        return os.environ.get("WHATSAPP_WEBHOOK_VERIFY_TOKEN", "").strip()
+
+    def _app_secret(self) -> str:
+        return os.environ.get("WHATSAPP_APP_SECRET", "").strip()
+
+
 class AdvancedVideoSongRenderer:
     """Render a cinematic, audio-directed video from supplied visual assets."""
 
@@ -1662,6 +2786,42 @@ class OpenSourceVideoApiRenderer:
 
     VIDEO_SUFFIXES = {".mp4", ".mov", ".webm", ".mkv", ".gif", ".webp"}
 
+    @staticmethod
+    def known_targets() -> List[OpenSourceVideoApiTarget]:
+        return [
+            OpenSourceVideoApiTarget(
+                provider_id="comfyui_local",
+                name="Local ComfyUI video workflow",
+                backend="ComfyUI API",
+                source_url="https://github.com/comfyanonymous/ComfyUI",
+                base_url="http://127.0.0.1:8188",
+                auth_env="",
+                requires_cloud_allowed=False,
+                requires_explicit_consent=True,
+                purpose="Run local or user-hosted open video workflows such as Wan, HunyuanVideo, AnimateDiff, Mochi, or LTX.",
+                safety_notes=[
+                    "Use model checkpoints according to their licenses.",
+                    "Use only images, likenesses, voices, and songs you own or have permission to use.",
+                ],
+            ),
+            OpenSourceVideoApiTarget(
+                provider_id="wan555_huggingface_space",
+                name="WAN555 Hugging Face Space",
+                backend="Gradio queue API",
+                source_url="https://huggingface.co/spaces/kulkas2pintu/wan555/agents.md",
+                base_url="https://kulkas2pintu-wan555.hf.space",
+                auth_env="HF_TOKEN",
+                requires_cloud_allowed=True,
+                requires_explicit_consent=True,
+                purpose="Generate animated video from a single image through an authorized Hugging Face Space endpoint.",
+                safety_notes=[
+                    "Do not upload private or sensitive images unless the user explicitly confirms cloud use.",
+                    "Use official Gradio queue endpoints only; do not bypass login, quotas, CAPTCHA, or rate limits.",
+                    "Treat uploaded files and generated outputs as third-party cloud processing.",
+                ],
+            ),
+        ]
+
     def __init__(self, output_dir: Path | str, base_url: str = "http://127.0.0.1:8188"):
         self.output_dir = Path(output_dir).expanduser().resolve()
         self.base_url = base_url.rstrip("/")
@@ -1893,6 +3053,764 @@ class OpenSourceVideoApiRenderer:
                 text = text.replace(f"{{{{{key}}}}}", str(replacement))
             return text
         return value
+
+
+class OpenRouterVideoGenerator:
+    """OpenRouter async video generation adapter, including Veo models."""
+
+    endpoint = "https://openrouter.ai/api/v1"
+
+    def __init__(self, output_dir: Path | str):
+        self.output_dir = Path(output_dir).expanduser().resolve()
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+
+    def models(self) -> dict:
+        request = urllib.request.Request(
+            f"{self.endpoint}/videos/models",
+            headers=self._headers(),
+            method="GET",
+        )
+        with urllib.request.urlopen(request, timeout=30) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        models = payload.get("data") if isinstance(payload, dict) else []
+        if not isinstance(models, list):
+            models = []
+        return {
+            "provider": "openrouter",
+            "count": len(models),
+            "models": models,
+            "veo_models": [model for model in models if "veo" in str(model.get("id", "")).casefold()],
+        }
+
+    def generate(
+        self,
+        prompt: str,
+        *,
+        model: str = "google/veo-3.1",
+        aspect_ratio: str = "16:9",
+        duration: int = 8,
+        resolution: str = "720p",
+        generate_audio: bool = True,
+        timeout_seconds: int = 900,
+        consent: bool = False,
+    ) -> dict[str, object]:
+        prompt = " ".join(prompt.strip().split())
+        if not consent:
+            raise PermissionError("OpenRouter/Veo video generation may spend credits and requires explicit user confirmation")
+        require_cloud_allowed("OpenRouter/Veo video generation")
+        if not prompt:
+            raise ValueError("Video prompt is required")
+        project_dir = self.output_dir / f"openrouter_video_{uuid.uuid4().hex[:12]}"
+        project_dir.mkdir(parents=True, exist_ok=True)
+        prompt_path = project_dir / "prompt.txt"
+        manifest_path = project_dir / "manifest.json"
+        output_path = project_dir / "output_openrouter_video.mp4"
+        prompt_path.write_text(prompt + "\n", encoding="utf-8")
+        payload = {
+            "model": model,
+            "prompt": prompt,
+            "aspect_ratio": aspect_ratio,
+            "duration": int(duration),
+            "resolution": resolution,
+            "generate_audio": bool(generate_audio),
+        }
+        submit = self._json_request("/videos", payload, timeout=60)
+        job_id = str(submit.get("id") or "").strip()
+        polling_url = str(submit.get("polling_url") or "").strip()
+        if not job_id and polling_url:
+            job_id = polling_url.rstrip("/").split("/")[-1]
+        if not job_id:
+            raise RuntimeError(f"OpenRouter did not return a video job id: {submit}")
+        status_payload = self._poll_video_job(job_id, timeout_seconds)
+        unsigned_urls = status_payload.get("unsigned_urls") or []
+        if not unsigned_urls:
+            raise RuntimeError(f"OpenRouter video job completed without a downloadable URL: {status_payload}")
+        self._download_video(str(unsigned_urls[0]), output_path)
+        manifest = {
+            "kind": "openrouter_video_generation",
+            "status": "rendered",
+            "provider": "openrouter",
+            "model": model,
+            "prompt": prompt,
+            "aspect_ratio": aspect_ratio,
+            "duration": int(duration),
+            "resolution": resolution,
+            "generate_audio": bool(generate_audio),
+            "job": submit,
+            "final_status": status_payload,
+            "output": str(output_path),
+            "prompt_path": str(prompt_path),
+            "safety": [
+                "This cloud video job can spend OpenRouter credits.",
+                "Use only prompts, likenesses, voices, songs, images, and references you own or have permission to use.",
+                "Label generated or AI-assisted video when sharing.",
+            ],
+        }
+        manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
+        return {
+            "output_path": str(output_path),
+            "manifest_path": str(manifest_path),
+            "prompt_path": str(prompt_path),
+            "job_id": job_id,
+            "generation_id": status_payload.get("generation_id") or submit.get("generation_id"),
+            "model": model,
+            "status": status_payload.get("status", "completed"),
+            "usage": status_payload.get("usage", {}),
+        }
+
+    def _poll_video_job(self, job_id: str, timeout_seconds: int) -> dict:
+        deadline = time.time() + max(30, timeout_seconds)
+        last: dict = {}
+        while time.time() < deadline:
+            request = urllib.request.Request(
+                f"{self.endpoint}/videos/{urllib.parse.quote(job_id)}",
+                headers=self._headers(),
+                method="GET",
+            )
+            with urllib.request.urlopen(request, timeout=30) as response:
+                last = json.loads(response.read().decode("utf-8"))
+            status = str(last.get("status", "")).casefold()
+            if status == "completed":
+                return last
+            if status in {"failed", "cancelled", "canceled", "error"}:
+                raise RuntimeError(f"OpenRouter video job failed: {last}")
+            time.sleep(5)
+        raise TimeoutError(f"OpenRouter video job did not finish within {timeout_seconds}s: {job_id}. Last status: {last}")
+
+    def _json_request(self, path: str, payload: dict, timeout: int) -> dict:
+        request = urllib.request.Request(
+            f"{self.endpoint}{path}",
+            data=json.dumps(payload).encode("utf-8"),
+            headers=self._headers(content_type=True),
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return json.loads(response.read().decode("utf-8"))
+
+    def _download_video(self, url: str, output_path: Path) -> None:
+        request = urllib.request.Request(url, headers={"User-Agent": "Gima local assistant/0.1"})
+        with urllib.request.urlopen(request, timeout=180) as response:
+            output_path.write_bytes(response.read())
+
+    def _headers(self, *, content_type: bool = False) -> dict[str, str]:
+        api_key = os.environ.get("OPENROUTER_VIDEO_API_KEY", "").strip() or os.environ.get("OPENROUTER_API_KEY", "").strip()
+        if not api_key:
+            raise RuntimeError("OPENROUTER_VIDEO_API_KEY or OPENROUTER_API_KEY is not set. Save the OpenRouter/Veo key in API Bindings first.")
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Accept": "application/json",
+            "HTTP-Referer": "http://127.0.0.1:8787",
+            "X-Title": "Gima local assistant",
+        }
+        if content_type:
+            headers["Content-Type"] = "application/json"
+        return headers
+
+
+class HuggingFaceVideoGenerator:
+    """Hugging Face InferenceClient text-to-video adapter."""
+
+    def __init__(self, output_dir: Path | str):
+        self.output_dir = Path(output_dir).expanduser().resolve()
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+
+    def status(self) -> dict[str, object]:
+        return {
+            "provider": "huggingface",
+            "backend": "huggingface_hub.InferenceClient.text_to_video",
+            "ready": bool(self._hf_token()),
+            "cloud_allowed": cloud_allowed(),
+            "default_provider": os.environ.get("GIMA_HF_VIDEO_PROVIDER", "replicate"),
+            "default_model": os.environ.get("GIMA_HF_VIDEO_MODEL", "Wan-AI/Wan2.2-TI2V-5B"),
+            "env": ["HF_TOKEN or HUGGINGFACE_API_KEY", "CLOUD_ALLOWED=true"],
+            "safety": [
+                "Requires explicit consent because provider inference may spend credits.",
+                "Use only prompts, images, voices, songs, likenesses, and references you own or have permission to use.",
+                "Gima stores output and manifest locally; it never exposes the token to the browser.",
+            ],
+        }
+
+    def generate(
+        self,
+        prompt: str,
+        *,
+        model: str = "Wan-AI/Wan2.2-TI2V-5B",
+        provider: str = "replicate",
+        timeout_seconds: int = 900,
+        consent: bool = False,
+    ) -> dict[str, object]:
+        prompt = " ".join(prompt.strip().split())
+        if not consent:
+            raise PermissionError("Hugging Face video generation can spend credits and requires explicit consent")
+        require_cloud_allowed("Hugging Face text-to-video generation")
+        if not prompt:
+            raise ValueError("Video prompt is required")
+        token = self._hf_token()
+        if not token:
+            raise RuntimeError("HF_TOKEN or HUGGINGFACE_API_KEY is not set")
+        project_dir = self.output_dir / f"huggingface_video_{uuid.uuid4().hex[:12]}"
+        project_dir.mkdir(parents=True, exist_ok=True)
+        output_path = project_dir / "output_huggingface_video.mp4"
+        prompt_path = project_dir / "prompt.txt"
+        manifest_path = project_dir / "manifest.json"
+        prompt_path.write_text(prompt + "\n", encoding="utf-8")
+
+        try:
+            hub = importlib.import_module("huggingface_hub")
+        except ImportError as error:
+            raise RuntimeError("Install huggingface_hub to use Hugging Face video generation: pip install huggingface_hub") from error
+        client = hub.InferenceClient(provider=provider, api_key=token)
+        video = client.text_to_video(prompt, model=model)
+        self._write_video_result(video, output_path, timeout_seconds)
+        manifest = {
+            "kind": "huggingface_text_to_video",
+            "status": "generated",
+            "provider": "huggingface",
+            "inference_provider": provider,
+            "model": model,
+            "prompt": prompt,
+            "output": str(output_path),
+            "prompt_path": str(prompt_path),
+            "response_type": type(video).__name__,
+            "safety": [
+                "This cloud video job can spend Hugging Face/provider credits.",
+                "Use only prompts, likenesses, voices, songs, images, and references you own or have permission to use.",
+                "Label generated or AI-assisted video when sharing.",
+            ],
+        }
+        manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
+        return {
+            "status": "generated",
+            "provider": "huggingface",
+            "inference_provider": provider,
+            "model": model,
+            "output_path": str(output_path),
+            "manifest_path": str(manifest_path),
+            "prompt_path": str(prompt_path),
+        }
+
+    def _write_video_result(self, video: object, output_path: Path, timeout_seconds: int) -> None:
+        if isinstance(video, bytes):
+            output_path.write_bytes(video)
+            return
+        if isinstance(video, bytearray):
+            output_path.write_bytes(bytes(video))
+            return
+        if hasattr(video, "read"):
+            data = video.read()
+            if isinstance(data, str):
+                data = data.encode("utf-8")
+            output_path.write_bytes(bytes(data))
+            return
+        if isinstance(video, (str, Path)):
+            value = str(video)
+            if value.startswith(("https://", "http://")):
+                request = urllib.request.Request(value, headers={"User-Agent": "Gima local assistant/0.1"})
+                with urllib.request.urlopen(request, timeout=max(30, timeout_seconds)) as response:
+                    output_path.write_bytes(response.read())
+                return
+            source = Path(value).expanduser().resolve()
+            if source.exists() and source.is_file():
+                shutil.copy2(source, output_path)
+                return
+        if isinstance(video, dict):
+            payload = video
+            for key in ("video", "video_base64", "mp4", "data"):
+                value = payload.get(key)
+                if isinstance(value, str) and value.strip():
+                    text = value.strip()
+                    if text.startswith("data:") and "," in text:
+                        text = text.split(",", 1)[1]
+                    try:
+                        output_path.write_bytes(base64.b64decode(text))
+                        return
+                    except Exception:
+                        pass
+            for key in ("url", "video_url", "download_url", "file"):
+                value = payload.get(key)
+                if isinstance(value, str) and value.startswith(("https://", "http://")):
+                    request = urllib.request.Request(value, headers={"User-Agent": "Gima local assistant/0.1"})
+                    with urllib.request.urlopen(request, timeout=max(30, timeout_seconds)) as response:
+                        output_path.write_bytes(response.read())
+                    return
+        raise RuntimeError(f"Hugging Face text_to_video returned unsupported type: {type(video).__name__}")
+
+    def _hf_token(self) -> str:
+        return os.environ.get("HF_TOKEN", "").strip() or os.environ.get("HUGGINGFACE_API_KEY", "").strip()
+
+
+class OpenRouterSpeechGenerator:
+    """OpenRouter text-to-speech adapter, including Microsoft MAI Voice 2."""
+
+    endpoint = "https://openrouter.ai/api/v1/audio/speech"
+
+    def __init__(self, output_dir: Path):
+        self.output_dir = output_dir
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+
+    def generate(
+        self,
+        text: str,
+        *,
+        model: str = "microsoft/mai-voice-2",
+        voice: str = "en-US-Harper:MAI-Voice-2",
+        response_format: str = "mp3",
+        speed: float = 1.0,
+        style: str = "cheerful",
+        styledegree: float = 1.0,
+        consent: bool = False,
+    ) -> dict[str, Any]:
+        clean_text = " ".join(text.strip().split())
+        if not clean_text:
+            raise ValueError("Speech text is required")
+        if not consent:
+            raise PermissionError("OpenRouter speech generation can spend credits and requires explicit user confirmation")
+        require_cloud_allowed("OpenRouter text-to-speech generation")
+        fmt = response_format.strip().casefold() or "mp3"
+        if fmt not in {"mp3", "pcm"}:
+            raise ValueError("response_format must be mp3 or pcm")
+        project_dir = self.output_dir / f"openrouter_speech_{uuid.uuid4().hex[:12]}"
+        project_dir.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "model": model,
+            "input": clean_text,
+            "voice": voice,
+            "response_format": fmt,
+            "speed": max(0.5, min(float(speed), 2.0)),
+            "provider": {
+                "options": {
+                    "azure": {
+                        "style": style,
+                        "styledegree": max(0.0, min(float(styledegree), 2.0)),
+                    }
+                }
+            },
+        }
+        request = urllib.request.Request(
+            self.endpoint,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {self._api_key()}",
+                "Content-Type": "application/json",
+                "Accept": "audio/mpeg, audio/pcm, application/json",
+                "HTTP-Referer": "http://127.0.0.1:8787",
+                "X-Title": "Gima local assistant",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=120) as response:
+            content_type = response.headers.get("Content-Type", "")
+            generation_id = response.headers.get("X-Generation-Id", "")
+            body = response.read()
+        if not content_type.startswith("audio/"):
+            detail = body.decode("utf-8", errors="replace")[:500]
+            raise RuntimeError(f"OpenRouter speech did not return audio: {detail}")
+        suffix = ".mp3" if fmt == "mp3" else ".pcm"
+        output_path = project_dir / f"speech{suffix}"
+        manifest_path = project_dir / "manifest.json"
+        prompt_path = project_dir / "speech_text.txt"
+        output_path.write_bytes(body)
+        prompt_path.write_text(clean_text, encoding="utf-8")
+        manifest = {
+            "kind": "openrouter_text_to_speech",
+            "provider": "openrouter",
+            "model": model,
+            "voice": voice,
+            "response_format": fmt,
+            "speed": payload["speed"],
+            "style": style,
+            "styledegree": payload["provider"]["options"]["azure"]["styledegree"],
+            "output_path": str(output_path),
+            "prompt_path": str(prompt_path),
+            "generation_id": generation_id,
+            "content_type": content_type,
+            "safety": [
+                "Cloud speech generation may spend OpenRouter credits.",
+                "Do not synthesize speech impersonating a real private person without permission.",
+                "Use only text you have rights to publish.",
+            ],
+        }
+        manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        return {
+            "status": "generated",
+            "output_path": str(output_path),
+            "manifest_path": str(manifest_path),
+            "prompt_path": str(prompt_path),
+            "generation_id": generation_id,
+            "model": model,
+            "voice": voice,
+            "content_type": content_type,
+        }
+
+    def _api_key(self) -> str:
+        api_key = os.environ.get("OPENROUTER_SPEECH_API_KEY", "").strip() or os.environ.get("OPENROUTER_API_KEY", "").strip()
+        if not api_key:
+            raise RuntimeError("OPENROUTER_SPEECH_API_KEY or OPENROUTER_API_KEY is not set. Save the OpenRouter/MAI key in API Bindings first.")
+        return api_key
+
+
+class ExternalMusicApiGenerator:
+    """Cloud music adapter for approved APIs, with local-first safety gates."""
+
+    AUDIO_SUFFIX_BY_MIME = {
+        "audio/wav": ".wav",
+        "audio/x-wav": ".wav",
+        "audio/mpeg": ".mp3",
+        "audio/mp3": ".mp3",
+        "audio/mp4": ".m4a",
+        "audio/aac": ".aac",
+        "audio/ogg": ".ogg",
+        "audio/flac": ".flac",
+    }
+    PROVIDERS = {
+        "huggingface_musicgen": "Hugging Face / MusicGen endpoint",
+        "suno_compatible": "Suno-compatible approved gateway",
+        "waivepulse_local": "WAIvePulse local HeartMuLa server",
+    }
+    SECRET_KEYS = {"key", "token", "secret", "authorization", "api_key", "apikey", "access_token"}
+
+    def __init__(self, output_dir: Path | str):
+        self.output_dir = Path(output_dir).expanduser().resolve()
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+
+    def status(self) -> dict[str, object]:
+        return {
+            "providers": [
+                {
+                    "id": "huggingface_musicgen",
+                    "label": self.PROVIDERS["huggingface_musicgen"],
+                    "ready": bool(self._hf_token()),
+                    "endpoint": self._musicgen_endpoint(),
+                    "env": ["GIMA_MUSICGEN_ENDPOINT_URL", "HUGGINGFACE_API_KEY or HF_TOKEN"],
+                },
+                {
+                    "id": "suno_compatible",
+                    "label": self.PROVIDERS["suno_compatible"],
+                    "ready": bool(os.environ.get("GIMA_SUNO_API_BASE_URL", "").strip() and self._suno_token()),
+                    "endpoint": os.environ.get("GIMA_SUNO_API_BASE_URL", "").strip(),
+                    "env": ["GIMA_SUNO_API_BASE_URL", "SUNO_API_KEY or GIMA_MUSIC_API_KEY"],
+                    "safety": "Only use official/authorized gateways. Gima does not bypass login, CAPTCHA, payment, or rate limits.",
+                },
+                {
+                    "id": "waivepulse_local",
+                    "label": self.PROVIDERS["waivepulse_local"],
+                    "ready": self._waivepulse_ready().get("ready", False),
+                    "endpoint": self._waivepulse_url(),
+                    "env": ["GIMA_WAIVEPULSE_URL"],
+                    "safety": "Runs locally through WAIvePulse. HeartMuLa generation requires a CUDA NVIDIA GPU; macOS can use this only if the server runs elsewhere.",
+                    "status": self._waivepulse_ready(),
+                },
+            ],
+            "cloud_allowed": cloud_allowed(),
+            "note": "Cloud providers require CLOUD_ALLOWED=true. WAIvePulse local only requires a running local/authorized backend and consent=true.",
+        }
+
+    def generate(
+        self,
+        prompt: str,
+        *,
+        provider: str = "huggingface_musicgen",
+        lyrics: str = "",
+        model: str = "",
+        duration_seconds: int = 30,
+        instrumental: bool = False,
+        consent: bool = False,
+        timeout_seconds: int = 300,
+    ) -> ExternalMusicApiProject:
+        provider = provider.strip().casefold()
+        if provider not in self.PROVIDERS:
+            raise ValueError(f"Unsupported music provider: {provider}")
+        if not consent:
+            raise PermissionError("External music generation can spend credits and requires explicit consent")
+        if provider != "waivepulse_local":
+            require_cloud_allowed("external music generation")
+        prompt = " ".join(prompt.strip().split())
+        if not prompt:
+            raise ValueError("Music prompt is required")
+
+        project_dir = self.output_dir / f"external_music_{uuid.uuid4().hex[:12]}"
+        project_dir.mkdir(parents=True, exist_ok=True)
+        prompt_path = project_dir / "prompt.txt"
+        manifest_path = project_dir / "manifest.json"
+        prompt_path.write_text(self._prompt_text(prompt, lyrics), encoding="utf-8")
+
+        if provider == "huggingface_musicgen":
+            response = self._call_huggingface_musicgen(prompt, lyrics, model, duration_seconds, instrumental, timeout_seconds)
+        elif provider == "waivepulse_local":
+            response = self._call_waivepulse_local(prompt, lyrics, model, duration_seconds, timeout_seconds)
+        else:
+            response = self._call_suno_compatible(prompt, lyrics, model, duration_seconds, instrumental, timeout_seconds)
+
+        output_path = self._write_audio_response(project_dir, response)
+        manifest = {
+            "kind": "external_music_api",
+            "status": "generated",
+            "provider": provider,
+            "provider_label": self.PROVIDERS[provider],
+            "model": model,
+            "prompt": prompt,
+            "lyrics_provided": bool(lyrics.strip()),
+            "duration_seconds": max(1, min(int(duration_seconds), 600)),
+            "instrumental": bool(instrumental),
+            "output": str(output_path),
+            "prompt_path": str(prompt_path),
+            "response_summary": self._safe_summary(response),
+            "safety": [
+                "Cloud music generation requires CLOUD_ALLOWED=true and explicit consent.",
+                "Use only prompts, lyrics, melodies, voices, and styles you own or have permission to use.",
+                "Suno-compatible mode is for official/authorized gateways only, not browser-token scraping or CAPTCHA bypass.",
+            ],
+        }
+        manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
+        return ExternalMusicApiProject(project_dir, output_path, manifest_path, prompt_path)
+
+    def _call_huggingface_musicgen(
+        self,
+        prompt: str,
+        lyrics: str,
+        model: str,
+        duration_seconds: int,
+        instrumental: bool,
+        timeout_seconds: int,
+    ) -> dict[str, object]:
+        token = self._hf_token()
+        if not token:
+            raise RuntimeError("HUGGINGFACE_API_KEY or HF_TOKEN is not set")
+        endpoint = self._musicgen_endpoint()
+        payload = {
+            "inputs": self._prompt_text(prompt, lyrics),
+            "parameters": {
+                "duration": max(1, min(int(duration_seconds), 600)),
+                "model": model,
+                "instrumental": bool(instrumental),
+            },
+        }
+        request = urllib.request.Request(
+            endpoint,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+                "Accept": "audio/wav, audio/mpeg, application/json",
+                "User-Agent": "Gima local assistant/0.1",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=max(30, timeout_seconds)) as response:
+            return {"content_type": self._content_type(response), "body": response.read(), "url": endpoint}
+
+    def _call_suno_compatible(
+        self,
+        prompt: str,
+        lyrics: str,
+        model: str,
+        duration_seconds: int,
+        instrumental: bool,
+        timeout_seconds: int,
+    ) -> dict[str, object]:
+        base_url = os.environ.get("GIMA_SUNO_API_BASE_URL", "").strip().rstrip("/")
+        token = self._suno_token()
+        if not base_url:
+            raise RuntimeError("GIMA_SUNO_API_BASE_URL is not set")
+        if not token:
+            raise RuntimeError("SUNO_API_KEY or GIMA_MUSIC_API_KEY is not set")
+        path = os.environ.get("GIMA_SUNO_GENERATE_PATH", "/api/generate").strip() or "/api/generate"
+        if not path.startswith("/"):
+            path = "/" + path
+        payload = {
+            "prompt": prompt,
+            "lyrics": lyrics,
+            "model": model,
+            "duration_seconds": max(1, min(int(duration_seconds), 600)),
+            "instrumental": bool(instrumental),
+        }
+        request = urllib.request.Request(
+            base_url + path,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+                "Accept": "audio/wav, audio/mpeg, application/json",
+                "User-Agent": "Gima local assistant/0.1",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=max(30, timeout_seconds)) as response:
+            return {"content_type": self._content_type(response), "body": response.read(), "url": base_url + path}
+
+    def _call_waivepulse_local(
+        self,
+        prompt: str,
+        lyrics: str,
+        title: str,
+        duration_seconds: int,
+        timeout_seconds: int,
+    ) -> dict[str, object]:
+        lyrics = lyrics.strip()
+        if not lyrics:
+            raise ValueError("WAIvePulse requires lyrics with section markers, for example [Verse] and [Chorus]")
+        base_url = self._waivepulse_url()
+        status = self._waivepulse_ready()
+        if not status.get("server_running", False):
+            raise RuntimeError(f"WAIvePulse is not running at {base_url}. Start it first with its start.sh/start.bat.")
+        if not status.get("ready", False):
+            raise RuntimeError(f"WAIvePulse model is not ready: {status}")
+        payload = {
+            "lyrics": lyrics,
+            "tags": prompt,
+            "title": title.strip() or "Gima WAIvePulse Song",
+            "artist": "Gima",
+            "max_duration_sec": max(4, min(int(duration_seconds), 600)),
+            "temperature": 1.0,
+            "cfg_scale": 1.5,
+            "topk": 50,
+        }
+        submit = self._json_post(f"{base_url}/generate", payload, timeout=30)
+        job_id = str(submit.get("job_id") or "").strip()
+        if not job_id:
+            raise RuntimeError(f"WAIvePulse did not return a job id: {submit}")
+        final = self._poll_waivepulse(base_url, job_id, timeout_seconds)
+        file_url = str(final.get("file") or "").strip()
+        if not file_url:
+            raise RuntimeError(f"WAIvePulse finished without an output file: {final}")
+        with urllib.request.urlopen(base_url + file_url, timeout=180) as response:
+            body = response.read()
+            content_type = self._content_type(response)
+        return {
+            "content_type": content_type if content_type != "application/octet-stream" else "audio/mpeg",
+            "body": body,
+            "url": base_url + file_url,
+            "waivepulse_job": final,
+        }
+
+    def _poll_waivepulse(self, base_url: str, job_id: str, timeout_seconds: int) -> dict[str, object]:
+        deadline = time.time() + max(30, timeout_seconds)
+        last: dict[str, object] = {}
+        while time.time() < deadline:
+            with urllib.request.urlopen(f"{base_url}/status/{urllib.parse.quote(job_id)}", timeout=20) as response:
+                last = json.loads(response.read().decode("utf-8"))
+            status = str(last.get("status", "")).casefold()
+            if status == "done":
+                return last
+            if status in {"error", "cancelled", "canceled"}:
+                raise RuntimeError(f"WAIvePulse job failed: {last}")
+            time.sleep(3)
+        raise TimeoutError(f"WAIvePulse job did not finish within {timeout_seconds}s: {job_id}. Last status: {last}")
+
+    def _write_audio_response(self, project_dir: Path, response: dict[str, object]) -> Path:
+        content_type = str(response.get("content_type") or "application/octet-stream").split(";", 1)[0].strip().lower()
+        body = response.get("body")
+        if not isinstance(body, bytes):
+            raise RuntimeError("Music API response did not include bytes")
+        if content_type.startswith("audio/"):
+            output_path = project_dir / f"generated_music{self.AUDIO_SUFFIX_BY_MIME.get(content_type, '.wav')}"
+            output_path.write_bytes(body)
+            return output_path
+
+        payload = json.loads(body.decode("utf-8", errors="replace"))
+        audio_bytes, suffix = self._audio_from_json(payload)
+        output_path = project_dir / f"generated_music{suffix}"
+        output_path.write_bytes(audio_bytes)
+        return output_path
+
+    def _audio_from_json(self, payload: object) -> tuple[bytes, str]:
+        if not isinstance(payload, dict):
+            raise RuntimeError("Music API JSON response must be an object")
+        for key in ["audio_base64", "audio", "wav", "mp3", "data"]:
+            value = payload.get(key)
+            if isinstance(value, str) and value.strip():
+                text = value.strip()
+                if text.startswith("data:") and "," in text:
+                    header, encoded = text.split(",", 1)
+                    suffix = ".mp3" if "mpeg" in header or "mp3" in header else ".wav"
+                    return base64.b64decode(encoded), suffix
+                try:
+                    return base64.b64decode(text), ".mp3" if key == "mp3" else ".wav"
+                except Exception:
+                    pass
+        for key in ["audio_url", "url", "download_url", "file"]:
+            value = payload.get(key)
+            if isinstance(value, str) and value.startswith(("https://", "http://")):
+                with urllib.request.urlopen(value, timeout=180) as response:
+                    content_type = self._content_type(response).split(";", 1)[0].lower()
+                    suffix = self.AUDIO_SUFFIX_BY_MIME.get(content_type) or Path(urllib.parse.urlparse(value).path).suffix or ".mp3"
+                    return response.read(), suffix
+        raise RuntimeError("Music API response did not contain audio bytes, base64 audio, or a downloadable audio URL")
+
+    def _prompt_text(self, prompt: str, lyrics: str) -> str:
+        lyrics = lyrics.strip()
+        if not lyrics:
+            return prompt.strip() + "\n"
+        return f"{prompt.strip()}\n\nLyrics:\n{lyrics}\n"
+
+    def _safe_summary(self, response: dict[str, object]) -> dict[str, object]:
+        summary: dict[str, object] = {"content_type": response.get("content_type", ""), "url": response.get("url", "")}
+        if "waivepulse_job" in response:
+            summary["waivepulse_job"] = self._redact(response["waivepulse_job"])
+        body = response.get("body")
+        if isinstance(body, bytes):
+            summary["body_bytes"] = len(body)
+            if str(response.get("content_type", "")).startswith("application/json"):
+                try:
+                    summary["json"] = self._redact(json.loads(body.decode("utf-8", errors="replace")))
+                except Exception:
+                    pass
+        return summary
+
+    def _redact(self, value: object) -> object:
+        if isinstance(value, dict):
+            return {
+                key: "[redacted]" if any(secret in str(key).casefold() for secret in self.SECRET_KEYS) else self._redact(item)
+                for key, item in value.items()
+            }
+        if isinstance(value, list):
+            return [self._redact(item) for item in value[:20]]
+        if isinstance(value, str) and len(value) > 240:
+            return value[:240] + "...[truncated]"
+        return value
+
+    def _content_type(self, response: object) -> str:
+        headers = getattr(response, "headers", None)
+        if headers and hasattr(headers, "get_content_type"):
+            return str(headers.get_content_type())
+        if headers and hasattr(headers, "get"):
+            return str(headers.get("Content-Type", "application/octet-stream")).split(";", 1)[0]
+        return "application/octet-stream"
+
+    def _musicgen_endpoint(self) -> str:
+        return os.environ.get(
+            "GIMA_MUSICGEN_ENDPOINT_URL",
+            "https://api-inference.huggingface.co/models/facebook/musicgen-small",
+        ).strip()
+
+    def _hf_token(self) -> str:
+        return os.environ.get("HUGGINGFACE_API_KEY", "").strip() or os.environ.get("HF_TOKEN", "").strip()
+
+    def _suno_token(self) -> str:
+        return os.environ.get("SUNO_API_KEY", "").strip() or os.environ.get("GIMA_MUSIC_API_KEY", "").strip()
+
+    def _waivepulse_url(self) -> str:
+        return os.environ.get("GIMA_WAIVEPULSE_URL", "http://127.0.0.1:7861").strip().rstrip("/")
+
+    def _waivepulse_ready(self) -> dict[str, object]:
+        base_url = self._waivepulse_url()
+        try:
+            with urllib.request.urlopen(f"{base_url}/model-status", timeout=2) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+            payload["server_running"] = True
+            return payload
+        except Exception as error:
+            return {"ready": False, "server_running": False, "error": str(error), "base_url": base_url}
+
+    def _json_post(self, url: str, payload: dict[str, object], timeout: int) -> dict[str, object]:
+        request = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json", "Accept": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return json.loads(response.read().decode("utf-8"))
 
 
 class NeuralLipSyncRenderer:

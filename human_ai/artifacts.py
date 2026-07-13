@@ -706,7 +706,7 @@ def _largest_request_count(message: str) -> int | None:
 
 
 def _summarize_text(text: str, query: str, max_sentences: int = 4) -> str:
-    cleaned = re.sub(r"\s+", " ", text).strip()
+    cleaned = re.sub(r"\s+", " ", _clean_cell_text(text)).strip()
     if not cleaned:
         return "No readable text extracted."
     terms = [term for term in re.findall(r"[a-zA-Z0-9]{4,}", query.casefold()) if term not in {"internet", "search"}]
@@ -733,7 +733,11 @@ def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
     with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=fields)
         writer.writeheader()
-        writer.writerows(rows)
+        writer.writerows([{key: _clean_cell_text(value) for key, value in row.items()} for row in rows])
+
+
+def _clean_cell_text(value: Any) -> str:
+    return str(value).replace("\x00", "").replace("\r", " ").strip()
 
 
 def _markdown_table(rows: list[dict[str, Any]]) -> str:

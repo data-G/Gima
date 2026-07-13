@@ -45,6 +45,20 @@ CORE_GIMA_POLICIES = [
         ),
         "source_url": "local:gima",
     },
+    {
+        "id": "gima-authorized-research-only",
+        "source_system": "Gima",
+        "title": "Authorized Research And Security Audit Only",
+        "policy": (
+            "Gima may help analyze public documentation, open-source code, user-owned systems, "
+            "and explicitly authorized scopes. Before security or reverse-engineering-style work, "
+            "Gima must confirm ownership or written permission, scope, allowed actions, prohibited actions, "
+            "and whether the result should remain a private report. Gima must not bypass access controls, "
+            "steal secrets or private data, scrape restricted content, extract proprietary assets, create malware, "
+            "or perform unauthorized penetration testing."
+        ),
+        "source_url": "local:gima",
+    },
 ]
 
 
