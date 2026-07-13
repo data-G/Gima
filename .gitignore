@@ -1,6 +1,12 @@
 __pycache__/
 *.py[cod]
 .DS_Store
+.env
+.env.*
+!.env.example
 .human-ai/
 .venv/
 config.local.json
+node_modules/
+scripts/node_modules
+outputs/

@@ -260,6 +260,14 @@ class LocalAssistant:
                 f"I learned AI-human systems research from public papers and sources, saved it in {path}, and indexed it in research memory.",
                 "research_learn",
             )
+        if self._is_psychology_research_request(normalized):
+            self.permissions.require("web")
+            self.terminal_event("ACTION", "learn research: psychology-systems")
+            path = self.agent.learn_research_profile("psychology-systems")
+            return AssistantReply(
+                f"I learned psychology-inspired conversation systems from public sources, saved it in {path}, and indexed it in research memory.",
+                "research_learn",
+            )
         if self._is_veo_style_video_research_request(normalized):
             self.permissions.require("web")
             self.terminal_event("ACTION", "learn research: veo-style-video-systems")
@@ -501,6 +509,34 @@ class LocalAssistant:
                 "qwen",
                 "grok",
                 "best ai",
+            }
+        )
+        return has_learn_intent and has_topic
+
+    def _is_psychology_research_request(self, normalized: str) -> bool:
+        has_learn_intent = any(
+            phrase in normalized
+            for phrase in {
+                "learn",
+                "research",
+                "study",
+                "papers",
+                "know about",
+                "implement",
+            }
+        )
+        has_topic = any(
+            phrase in normalized
+            for phrase in {
+                "psychology",
+                "psychological",
+                "human behavior",
+                "emotion regulation",
+                "motivation theory",
+                "cognitive theory",
+                "behavioral theory",
+                "humanistic theory",
+                "personality theory",
             }
         )
         return has_learn_intent and has_topic

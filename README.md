@@ -30,6 +30,23 @@ python3 -m human_ai.cli speak "Local speech is working"
 
 ## Gima Control Center
 
+For the current build order, capability gates, and next sprint, see
+[`docs/GIMA_IMPROVEMENT_PLAN.md`](/Users/gimhangunarathne/Documents/Gima/docs/GIMA_IMPROVEMENT_PLAN.md).
+
+### Easiest macOS start
+
+Double-click **`Start Gima.command`** in the Gima folder. It starts Gima in the
+background when needed and opens the upgraded interface at
+`http://127.0.0.1:8787/`. Double-clicking it again safely reuses the running
+server.
+
+The equivalent Terminal command is:
+
+```bash
+cd /Users/gimhangunarathne/Documents/Gima
+./Start\ Gima.command
+```
+
 Use the short `gima` command after installing the package, or run it immediately
 from this folder with `python3 -m human_ai.gima`.
 
@@ -203,6 +220,28 @@ lesson to `.human-ai/brain/teacher-learnings/`, and writes logs under
 `.human-ai/secrets.env`, so `teacher-setup` is enough for scheduled
 ChatGPT/Gemini learning to run unattended.
 
+### Safe continuous cycle
+
+The upgraded macOS installation uses `com.gima.continuous-cycle` at 02:00 each
+day. Each bounded cycle:
+
+- asks the working Gemini teacher for one natural-language improvement lesson;
+- stores the lesson as review knowledge and rebuilds `brain.csv`;
+- creates a source recovery archive and a knowledge/continuous-state snapshot;
+- runs focused memory and artifact smoke tests;
+- retains the latest 14 source and state snapshots.
+
+Run or reinstall it manually:
+
+```bash
+python3 scripts/gima_continuous_cycle.py --provider gemini --rounds 1 --retention 14
+python3 scripts/install_gima_continuous_cycle.py
+```
+
+Continuous learning never modifies live source code. Upgrade suggestions remain
+review-only knowledge. Code upgrades still use the isolated `self-code` copy,
+tests, backup, and parent-approved `self-update-sync` workflow below.
+
 CSV memory is stored under `.human-ai/csv/`. The SQLite file
 `.human-ai/index.sqlite3` is only a generated search cache. Delete it and run
 `python3 -m human_ai.cli rebuild` at any time.
@@ -215,6 +254,27 @@ python3 -m human_ai.cli conversation-history
 python3 -m human_ai.cli conversation-history "umbrella"
 python3 -m human_ai.cli conversation-history --session-id SESSION_ID
 ```
+
+## Master AI Director Strategy
+
+Gima should treat a 16 GB RAM Intel Mac as a **controller-class machine**, not a
+frontier-model training server. It should keep local compute light: file parsing,
+BM25/inverted-index search, small quantized chat, scripting, artifact QA, and
+memory. Heavy reasoning, current research, image generation, video generation,
+and long-context synthesis should route to approved cloud APIs only when
+`CLOUD_ALLOWED=true` and the user has consented.
+
+The intended architecture is:
+
+- **Thinker:** decomposes the task and defines success criteria.
+- **Communicator:** challenges assumptions, privacy risk, evidence quality, and
+  cost.
+- **Local Executive Controller:** runs local tools, indexes files, generates
+  artifacts, tests changes, and saves reviewable memory.
+
+This does not beat frontier AI by raw compute. It competes by orchestration:
+local privacy, fast retrieval, teacher-student summaries, reviewable memory, and
+automated workflows that connect many tools into one command deck.
 
 ## Capabilities
 
@@ -261,6 +321,13 @@ python3 -m human_ai.cli memory-approve kb_RECORD_ID
 Tool execution is disabled by default. When enabled, the runner accepts only
 configured executable names, uses the configured workspace as its working
 directory, captures output, enforces a timeout, and writes an audit event.
+
+Authorized research and security-audit-style requests are permission-gated. Gima
+can analyze public docs, public websites, official API documentation,
+open-source code, and user-owned systems, but it must ask for ownership or
+written permission, scope, allowed actions, prohibited actions, and private-report
+preference before deeper security or reverse-engineering work. See
+[`docs/AUTHORIZED_RESEARCH_SECURITY_AUDIT.md`](/Users/gimhangunarathne/Documents/Gima/docs/AUTHORIZED_RESEARCH_SECURITY_AUDIT.md).
 
 No spoken phrase or password grants unlimited machine ownership. A phrase such
 as `Gima@3152` should not be used as a master unlock. Use scoped terminal grants
@@ -513,6 +580,58 @@ For speech recognition and local models, build or install `whisper.cpp` and
 `llama.cpp` separately, then select small quantized models suitable for an Intel
 Mac with 16 GB RAM.
 
+### Optional Local Transformers / Gemma Chat
+
+The web UI includes a **Local Transformers Chat** card for running Hugging Face
+text-generation models such as `google/gemma-2-2b-it`. It saves the prompt,
+response, and manifest under `hands/out/transformers_text`.
+
+Install only when you want this local Python pipeline:
+
+```bash
+python3 -m pip install --upgrade torch transformers accelerate sentencepiece
+```
+
+On a Mac, choose `mps` or `auto` in the UI. Keep **local files only** enabled for
+offline/cache-only runs. Turn it off only when you intentionally allow
+Transformers to download a model from Hugging Face.
+
+### Optional WhatsApp Messaging
+
+The web UI includes a **WhatsApp Messenger** card. Draft mode creates a local
+`wa.me` link for review in WhatsApp. Direct sending uses the official WhatsApp
+Cloud API only when these are configured:
+
+```bash
+export WHATSAPP_CLOUD_TOKEN="..."
+export WHATSAPP_PHONE_NUMBER_ID="..."
+export CLOUD_ALLOWED=true
+```
+
+For retrieval, Gima keeps a local searchable index of WhatsApp drafts, outbound
+API sends, and inbound WhatsApp Cloud webhook messages. Configure Meta's webhook
+callback to:
+
+```text
+https://your-public-tunnel-or-domain/api/whatsapp/webhook
+```
+
+and set:
+
+```bash
+export WHATSAPP_WEBHOOK_VERIFY_TOKEN="choose-a-long-random-token"
+```
+
+Optional webhook signature verification:
+
+```bash
+export WHATSAPP_APP_SECRET="..."
+```
+
+Use it only for expected, permissioned messages. Gima does not read old chats
+from your personal WhatsApp app, bypass WhatsApp limits, automate spam, or
+expose the token in the browser.
+
 ## Safety Model
 
 Camera use, screen capture, web imports, and tool execution are explicit or
@@ -547,6 +666,19 @@ Sync into the live Gima only after parent approval:
 python3 -m human_ai.gima self-update-sync <update_id> --restart
 ```
 
+Gima can also implement a requested change inside the backed-up working copy by
+using the locally installed Codex coding runtime, then run the test suite and
+save a reviewable patch and logs:
+
+```bash
+python3 -m human_ai.gima self-code "add the feature description here"
+```
+
+The live workspace is not changed by `self-code`. Review the generated working
+copy, patch, `coding.log`, and `tests.log`, then use `self-update-ready` and the
+parent-approved `self-update-sync` workflow. The web interface exposes the same
+flow as **Implement in Isolated Copy** under Coding.
+
 `self-update-sync` asks for the parent password, creates another backup before
 copying, and refuses to overwrite a dirty live git workspace unless `--force` is
 provided.
@@ -556,3 +688,14 @@ provided.
 ```bash
 python3 -m unittest discover -s tests -v
 ```
+
+Run the live product audit against the currently running web UI:
+
+```bash
+python3 scripts/gima_world_test.py --base-url http://127.0.0.1:8787 --workspace /Users/gimhangunarathne/Documents/Gima
+```
+
+The audit checks the real server, core API contracts, brain search, chat,
+artifact generation, upload/download, blocked unsafe downloads, service worker
+version, and response-time budgets. Reports are written to
+`.human-ai/hands/out/test_reports/`.

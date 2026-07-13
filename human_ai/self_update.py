@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import tarfile
@@ -79,6 +80,14 @@ class SelfUpdateManager:
             "prepared",
         )
 
+    def create_backup(self, label: str) -> Path:
+        """Create a source-only recovery archive without preparing an update."""
+        safe_label = "".join(character if character.isalnum() or character in "-_" else "_" for character in label)
+        if not safe_label.strip("_-"):
+            raise ValueError("Backup label is required")
+        self.backups_dir.mkdir(parents=True, exist_ok=True)
+        return self._backup_current(safe_label)
+
     def list_requests(self) -> List[dict[str, str]]:
         if not self.requests_dir.exists():
             return []
@@ -147,9 +156,8 @@ class SelfUpdateManager:
 
     def _source_paths(self) -> Iterable[Path]:
         tracked = self._git_tracked_paths()
-        if tracked:
-            return tracked
-        return list(self._walk_files(self.workspace))
+        current = list(self._walk_files(self.workspace))
+        return sorted(set(tracked) | set(current))
 
     def _git_tracked_paths(self) -> List[Path]:
         if not (self.workspace / ".git").exists():
@@ -164,15 +172,15 @@ class SelfUpdateManager:
         return [self.workspace / name for name in names if (self.workspace / name).is_file()]
 
     def _walk_files(self, root: Path) -> Iterable[Path]:
-        for path in root.rglob("*"):
-            if not path.is_file():
-                continue
-            relative = path.relative_to(root)
-            if any(part in IGNORED_DIRS for part in relative.parts):
-                continue
-            if path.name in IGNORED_FILES:
-                continue
-            yield path
+        for current, directories, filenames in os.walk(root):
+            directories[:] = [name for name in directories if name not in IGNORED_DIRS]
+            current_path = Path(current)
+            for filename in filenames:
+                if filename in IGNORED_FILES:
+                    continue
+                path = current_path / filename
+                if path.is_file():
+                    yield path
 
     def _has_live_changes(self) -> bool:
         if not (self.workspace / ".git").exists():

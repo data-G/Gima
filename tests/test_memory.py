@@ -95,6 +95,17 @@ class MemoryStoreTests(unittest.TestCase):
         self.assertEqual(self.store.search("old"), [])
         self.assertEqual(self.store.search("new")[0]["content"], "new wording")
 
+    def test_replace_source_tolerates_nul_bytes_in_existing_csv(self):
+        with self.store.knowledge_path.open("ab") as handle:
+            handle.write(b"\x00\x00")
+        source = "/tmp/nul-note.txt"
+        added = self.store.replace_source(
+            source,
+            [Record(category="files", title="Nul Note", content="clean wording", source=source)],
+        )
+        self.assertEqual(added, 1)
+        self.assertEqual(self.store.search("clean")[0]["title"], "Nul Note")
+
     def test_conversation_is_written_and_searchable(self):
         self.store.append_conversation("session_1", "user", "Remember the blue umbrella")
         rows = self.store.search_conversations("umbrella")

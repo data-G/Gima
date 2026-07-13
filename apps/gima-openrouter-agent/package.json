@@ -1,0 +1,21 @@
+{
+  "name": "gima-openrouter-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A safe OpenRouter-powered terminal agent for the Gima workspace.",
+  "scripts": {
+    "start": "tsx src/cli.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@openrouter/agent": "latest",
+    "glob": "latest",
+    "zod": "latest"
+  },
+  "devDependencies": {
+    "@types/node": "latest",
+    "tsx": "latest",
+    "typescript": "latest"
+  }
+}

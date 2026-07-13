@@ -6,11 +6,18 @@ import time
 from pathlib import Path
 from typing import Dict, List, Tuple
 
+from .authorized_research import authorized_research_gate_response
+from .brain_index import rebuild_brain_csv
+from .consciousness import ConsciousnessGuide
 from .config import Config
 from .heart import HeartStore
 from .memory import MemoryStore, Record, now_iso
+from .psychology import PsychologyGuide
+from .quota import FreeQuotaTracker
 from .readers import iter_files, read_file
-from .services import LocalModel, TeacherModelClient, WebImporter
+from .research_reasoning import ResearchReasoner
+from .services import LocalModel, TeacherModelClient, WebImporter, require_cloud_allowed
+from .teacher_cache import TeacherAnswerCache
 from .violations import ViolationReporter
 
 
@@ -104,6 +111,25 @@ RESEARCH_LEARNING_SOURCES = {
             "https://docs.x.ai/developers/models",
             "https://qwen.readthedocs.io/en/latest/",
         ],
+    },
+    "psychology-systems": {
+        "title": "Psychology-Inspired AI Conversation Systems",
+        "file": "psychology-systems.md",
+        "keywords": (
+            "psychology theories AI assistant conversation empathy motivation cognitive behavioral "
+            "humanistic developmental social emotion regulation safety boundaries"
+        ),
+        "sources": [
+            "https://openstax.org/details/books/psychology-2e",
+            "https://nobaproject.com/modules/personality-traits",
+            "https://nobaproject.com/modules/conditioning-and-learning",
+            "https://nobaproject.com/modules/emotion",
+            "https://nobaproject.com/modules/motivation",
+            "https://nobaproject.com/modules/social-psychology",
+            "https://nobaproject.com/modules/developmental-psychology",
+            "https://www.apa.org/topics",
+            "https://en.wikipedia.org/wiki/Psychology",
+        ],
     }
 }
 
@@ -127,6 +153,17 @@ class Agent:
         self.heart.initialize()
         self.violations = ViolationReporter(config.resolved_data_dir, self.memory)
         self.teacher_models = TeacherModelClient(config)
+        self.free_quotas = FreeQuotaTracker(config.resolved_usage_dir, config.teacher_models.free_quota_daily_limits)
+        self.teacher_cache = TeacherAnswerCache(config.resolved_data_dir)
+        self.research_reasoner = ResearchReasoner(config.resolved_data_dir)
+        self.psychology = PsychologyGuide(config.resolved_data_dir)
+        self.psychology.initialize(self.memory)
+        self.consciousness = ConsciousnessGuide(config.resolved_data_dir)
+        self.consciousness.initialize(self.memory)
+        rebuild_brain_csv(
+            config.resolved_data_dir,
+            [config.resolved_data_dir / "brain", config.resolved_hands_dir, config.resolved_downloads_dir],
+        )
         self.session_id = uuid.uuid4().hex
 
     def ingest(self, path: Path) -> int:
@@ -332,6 +369,7 @@ class Agent:
         if provider_name == "local":
             answer = self._ask_local_teacher(teacher_prompt)
         else:
+            require_cloud_allowed(f"{provider_name} teacher model request")
             answer = self.teacher_models.ask(provider_name, teacher_prompt)
         return self._store_teacher_answer(provider_name, prompt, answer)
 
@@ -440,12 +478,20 @@ class Agent:
             return "chatgpt"
         if key in {"gemini", "google"}:
             return "gemini"
+        if key in {"anthropic", "claude"}:
+            return "anthropic"
+        if key in {"xai", "grok"}:
+            return "xai"
+        if key == "deepseek":
+            return "deepseek"
+        if key == "openrouter":
+            return "openrouter"
         if key in {"local", "local-brain", "brain", "gima"}:
             return "local"
-        raise ValueError("Provider must be local, chatgpt, openai, or gemini")
+        raise ValueError("Provider must be local, chatgpt/openai, gemini, anthropic/claude, xai/grok, deepseek, or openrouter")
 
     def list_ai_providers(self) -> List[Dict[str, str]]:
-        return [
+        rows = [
             {
                 "provider": "local",
                 "name": "Gima local brain",
@@ -464,14 +510,169 @@ class Agent:
                 "available": "yes" if self.teacher_models.available("gemini") else "no",
                 "detail": self.config.teacher_models.gemini_model,
             },
+            {
+                "provider": "anthropic",
+                "name": "Anthropic Claude",
+                "available": "yes" if self.teacher_models.available("anthropic") else "no",
+                "detail": self.config.teacher_models.anthropic_model,
+            },
+            {
+                "provider": "xai",
+                "name": "xAI Grok",
+                "available": "yes" if self.teacher_models.available("xai") else "no",
+                "detail": self.config.teacher_models.xai_model,
+            },
+            {
+                "provider": "deepseek",
+                "name": "DeepSeek",
+                "available": "yes" if self.teacher_models.available("deepseek") else "no",
+                "detail": self.config.teacher_models.deepseek_model,
+            },
+            {
+                "provider": "openrouter",
+                "name": "OpenRouter model gateway",
+                "available": "yes" if self.teacher_models.available("openrouter") else "no",
+                "detail": self.config.teacher_models.openrouter_model,
+            },
         ]
+        quota_status = {row["provider"]: row for row in self.free_quotas.status()}
+        for row in rows:
+            quota = quota_status.get(row["provider"])
+            if quota:
+                row["free_quota_mode"] = "on" if self.config.teacher_models.free_quota_mode else "off"
+                row["free_quota"] = f"{quota['remaining']}/{quota['limit']} remaining today"
+        return rows
 
     def transfer_teacher_knowledge(self, prompt: str, providers: List[str]) -> List[Tuple[str, str]]:
         results: List[Tuple[str, str]] = []
+        failures: List[str] = []
         for provider in providers:
-            answer = self.ask_teacher(provider, prompt)
+            try:
+                answer = self.ask_teacher(provider, prompt)
+            except Exception as error:
+                failures.append(f"{provider}: {error}")
+                self.memory.audit("teacher_transfer_skip", provider, str(error), "error")
+                continue
             results.append((provider, answer))
+        if not results:
+            detail = "; ".join(failures) if failures else "no provider returned an answer"
+            raise RuntimeError(f"No linked AI engine answered. {detail}")
         return results
+
+    def answer_with_all_ai(self, prompt: str, providers: List[str] | None = None) -> Tuple[str, List[Tuple[str, str]]]:
+        provider_names = providers or [
+            row["provider"]
+            for row in self.list_ai_providers()
+            if row["available"] == "yes" and row["provider"] != "local"
+        ]
+        provider_names = [
+            self._canonical_ai_provider(provider)
+            for provider in provider_names
+            if self._canonical_ai_provider(provider) != "local" or self.config.model.enabled
+        ]
+        if self.config.teacher_models.free_quota_mode:
+            allowed_names: List[str] = []
+            skipped: List[str] = []
+            for provider in provider_names:
+                allowed, reason = self.free_quotas.allowed(provider)
+                if allowed:
+                    allowed_names.append(provider)
+                else:
+                    skipped.append(reason)
+            provider_names = allowed_names
+            if skipped:
+                self.memory.audit("free_quota_skip", "multi_ai", "; ".join(skipped), "ok")
+        cached_rows = self.teacher_cache.get(prompt, provider_names)
+        if cached_rows:
+            cached_results = [(row["provider"], row["answer"]) for row in cached_rows]
+            answer = self._merge_teacher_answers(prompt, cached_results, from_cache=True)
+            self.memory.audit("teacher_cache_hit", prompt[:120], f"Used {len(cached_results)} cached teacher answers", "ok")
+            return answer, cached_results
+        if not provider_names:
+            raise RuntimeError(
+                "No free online AI quota is available right now. Add a free-tier Gemini/OpenRouter key, wait for quota reset, or disable free_quota_mode in config."
+            )
+        teacher_prompt = (
+            "Gima is a local personal AI. Answer the user's question in plain human language. "
+            "Be accurate, concise, and source-aware. If uncertain, say what must be verified. "
+            "Do not include executable code unless the user explicitly asks for code. "
+            f"{PERMANENT_HUMAN_LANGUAGE_LEARNING_RULE}\n\nUser question:\n{prompt}"
+        )
+        results: List[Tuple[str, str]] = []
+        failures: List[str] = []
+        for provider in provider_names:
+            try:
+                answer = self.ask_teacher(provider, teacher_prompt)
+            except Exception as error:
+                message = str(error)
+                failures.append(f"{provider}: {message}")
+                if self.config.teacher_models.free_quota_mode and _looks_like_quota_error(message):
+                    self.free_quotas.mark_exhausted(provider)
+                self.memory.audit("teacher_cascade_skip", provider, message, "error")
+                continue
+            results.append((provider, answer))
+            self.teacher_cache.add(prompt, provider, answer)
+            if self.config.teacher_models.free_quota_mode:
+                self.free_quotas.record(provider)
+        if not results:
+            details = "; ".join(failures) if failures else "no provider returned an answer"
+            raise RuntimeError(f"No linked AI engine answered. {details}")
+        answer = self._merge_teacher_answers(prompt, results)
+        record = Record(
+            category="teacher",
+            subcategory="multi_ai_answer",
+            kind="multi_teacher_answer",
+            title=f"Multi-AI answer: {prompt[:80]}",
+            content=answer,
+            keywords="multi ai teacher answer chatgpt gemini claude grok deepseek openrouter",
+            source=str(self.config.resolved_data_dir / "brain" / "teacher-learnings"),
+            confidence="0.55",
+            status="review",
+        )
+        record_id = self.memory.add(record)
+        self.memory.add_source_review(
+            record_id,
+            record.title,
+            record.source,
+            record.category,
+            record.subcategory,
+            answer[:1000],
+            internet_status="teacher_model_ensemble",
+        )
+        rebuild_brain_csv(
+            self.config.resolved_data_dir,
+            [self.config.resolved_data_dir / "brain", self.config.resolved_hands_dir, self.config.resolved_downloads_dir],
+        )
+        return answer, results
+
+    def _merge_teacher_answers(self, prompt: str, results: List[Tuple[str, str]], from_cache: bool = False) -> str:
+        lines = [
+            (
+                "Gima answered from saved teacher CSV cache, so no online quota was spent."
+                if from_cache
+                else "Gima asked the linked online AI engines and saved their human-language lessons into brain and CSV."
+            ),
+            "",
+            f"Question: {prompt}",
+            "",
+            "Combined answer:",
+        ]
+        best = ""
+        for provider, answer in results:
+            cleaned = self._human_language_learning_text(answer)
+            if len(cleaned) > len(best):
+                best = cleaned
+        if best:
+            lines.append(best[:1800])
+        else:
+            lines.append("The linked engines returned empty answers.")
+        lines.extend(["", "Teacher engine notes:"])
+        for provider, answer in results:
+            cleaned = self._human_language_learning_text(answer)
+            lines.append(f"- {provider}: {cleaned[:420] or '[empty]'}")
+        lines.append("")
+        lines.append("Review note: teacher answers are saved as review knowledge, not unquestioned truth.")
+        return "\n".join(lines)
 
     def daily_teacher_learning(
         self,
@@ -522,7 +723,14 @@ class Agent:
     def search(self, query: str, category: str | None = None, limit: int = 8):
         return self.memory.search(query, category=category, limit=limit)
 
-    def chat(self, message: str) -> str:
+    def chat(
+        self,
+        message: str,
+        *,
+        model_timeout_seconds: int | None = None,
+        max_tokens: int | None = None,
+        fallback_on_model_error: bool = False,
+    ) -> str:
         self.memory.append_conversation(self.session_id, "user", message)
         violation_reason = self.detect_heart_violation_attempt(message)
         if violation_reason:
@@ -533,36 +741,98 @@ class Agent:
             )
             self.memory.append_conversation(self.session_id, "assistant", answer)
             return answer
-        compact_prompt = self.config.model.active_level == "strong"
-        memory_limit = 2 if compact_prompt else 6
-        memory_chars = 420 if compact_prompt else 1200
-        matches = self.search(message, limit=memory_limit)
+        audit_gate = authorized_research_gate_response(message)
+        if audit_gate:
+            self.memory.audit("authorized_research_gate", message[:120], "Asked for permission, scope, allowed/prohibited actions, and private-report preference", "review")
+            self.memory.append_conversation(self.session_id, "assistant", audit_gate)
+            return audit_gate
+        direct_reply = self._direct_chat_reply(message)
+        if direct_reply:
+            self.memory.append_conversation(self.session_id, "assistant", direct_reply)
+            return direct_reply
+        model_name = self.config.model.model.casefold()
+        small_context = self.config.model.context_size <= 1536
+        slow_cpu_model = "gemma" in model_name or "12b" in model_name or self.config.model.active_level == "gemma4_12b"
+        compact_prompt = small_context or slow_cpu_model or self.config.model.active_level == "strong" or model_timeout_seconds is not None
+        memory_limit = 0 if slow_cpu_model else 1 if small_context else 2 if compact_prompt else 6
+        memory_chars = 0 if slow_cpu_model else 160 if small_context else 420 if compact_prompt else 1200
+        matches = self.search(message, limit=memory_limit) if memory_limit else []
         context = "\n\n".join(
             f"[{row['id']}] {row['title']}\n{row['content'][:memory_chars]}" for row in matches
         )
         if self.config.model.enabled:
-            heart_text = self.heart.active_text()
-            if compact_prompt:
-                heart_text = heart_text[:900]
-            prompt = (
-                "You are Gima, a local personal AI assistant running on this Mac. "
-                "Speak in clear English. Be conversational, practical, and concise. "
-                "Use retrieved memory when it helps, but do not invent facts. "
-                "Never violate Gima heart policies. "
-                f"{PERMANENT_HUMAN_LANGUAGE_LEARNING_RULE} "
-                "If memory is missing, say what you can infer and what you do not know. "
-                "Do not claim you used the camera, microphone, files, web, or shell unless a tool result confirms it. "
-                "When the user asks for an action, explain whether it is available and what permission is needed. "
-                "Keep answers short unless the user asks for detail.\n\nRetrieved local memory:\n"
-                f"{context or '[no matching memory]'}\n\nGima heart policies:\n{heart_text}"
-            )
-            answer = self.model.complete(
-                [{"role": "system", "content": prompt}, {"role": "user", "content": message}]
-            )
+            try:
+                heart_text = self.heart.active_text()
+                if slow_cpu_model:
+                    heart_text = heart_text[:160]
+                elif small_context:
+                    heart_text = heart_text[:260]
+                elif compact_prompt:
+                    heart_text = heart_text[:900]
+                psychology_text = self.psychology.prompt_guidance(message)
+                if slow_cpu_model:
+                    psychology_text = ""
+                elif small_context:
+                    psychology_text = psychology_text[:220]
+                elif compact_prompt:
+                    psychology_text = psychology_text[:900]
+                consciousness_text = self.consciousness.prompt_guidance(message)
+                if slow_cpu_model:
+                    consciousness_text = ""
+                elif small_context:
+                    consciousness_text = consciousness_text[:180]
+                elif compact_prompt:
+                    consciousness_text = consciousness_text[:900]
+                if slow_cpu_model:
+                    prompt = "You are Gima. Reply in one short practical sentence."
+                elif small_context:
+                    prompt = (
+                        "You are Gima, a local-first AI assistant on this Mac. "
+                        "Reply in 1-4 short sentences. Be direct, practical, and conversational. "
+                        "Use memory only if relevant. Do not invent facts or claim tools were used unless confirmed. "
+                        "Do not claim to be conscious, human, a therapist, or a doctor.\n\n"
+                        f"Memory:\n{context or '[none]'}\n\n"
+                        f"Care guide:\n{psychology_text}\n\n"
+                        f"Self-monitoring guide:\n{consciousness_text}\n\n"
+                        f"Safety:\n{heart_text}"
+                    )
+                else:
+                    prompt = (
+                        "You are Gima, a local personal AI assistant running on this Mac. "
+                        "Speak in clear English. Be conversational, practical, and concise. "
+                        "Use retrieved memory when it helps, but do not invent facts. "
+                        "Never violate Gima heart policies. "
+                        "Use psychology-inspired guidance only to improve listening, motivation, clarity, and emotional care. "
+                        "Use consciousness-inspired self-monitoring only as a transparent computational state loop. "
+                        "Do not diagnose, treat, or claim to be a therapist. "
+                        "Do not claim to be conscious, sentient, alive, human, or to have real feelings. "
+                        f"{PERMANENT_HUMAN_LANGUAGE_LEARNING_RULE} "
+                        "If memory is missing, say what you can infer and what you do not know. "
+                        "Do not claim you used the camera, microphone, files, web, or shell unless a tool result confirms it. "
+                        "When the user asks for an action, explain whether it is available and what permission is needed. "
+                        "Keep answers short unless the user asks for detail.\n\nRetrieved local memory:\n"
+                        f"{context or '[no matching memory]'}\n\n{psychology_text}\n\n{consciousness_text}\n\nGima heart policies:\n{heart_text}"
+                    )
+                inference_message = message
+                if "qwen3" in model_name or slow_cpu_model:
+                    inference_message = f"/no_think\n{message}"
+                answer = self.model.complete(
+                    [{"role": "system", "content": prompt}, {"role": "user", "content": inference_message}],
+                    timeout_seconds=model_timeout_seconds,
+                    max_tokens=min(max_tokens or self.config.model.max_tokens, 32) if slow_cpu_model else min(max_tokens or self.config.model.max_tokens, 64) if small_context else max_tokens,
+                )
+            except Exception as error:
+                if not fallback_on_model_error:
+                    raise
+                self.memory.audit("chat_model_fallback", "local_model", str(error), "error")
+                model_error = str(error)
+                if isinstance(error, TimeoutError) or "timed out" in model_error.casefold():
+                    reason = "Gima's local brain did not reply within the response limit."
+                else:
+                    reason = "Gima's local model could not complete this response, so I answered from Gima memory instead."
+                answer = self._memory_fallback_answer(message, matches, reason)
         elif matches:
-            lines: List[str] = ["Local model is disabled. I found these relevant memories:"]
-            lines.extend(f"- {row['title']}: {row['content'][:240]}" for row in matches)
-            answer = "\n".join(lines)
+            answer = self._memory_fallback_answer(message, matches, "Local model is disabled.")
         else:
             answer = (
                 "Local model is disabled and I could not find a matching memory. "
@@ -570,6 +840,85 @@ class Agent:
             )
         self.memory.append_conversation(self.session_id, "assistant", answer)
         return answer
+
+    def _direct_chat_reply(self, message: str) -> str:
+        normalized = " ".join(message.casefold().strip().strip("!.?").split())
+        if normalized in {"hi", "hello", "hey", "hi gima", "hello gima", "hey gima"}:
+            return "Hi. I am here and ready."
+        if normalized in {"are you there", "are you there gima", "test", "ping", "is it working", "is it working now", "is gima working"}:
+            return "Yes. Gima is running and replying. The local brain is online, memory search is working, and linked AI keys are saved. Cloud AI is used only when cloud mode is allowed and a linked Chat mode is selected."
+        if any(
+            phrase in normalized
+            for phrase in {
+                "who is your developer",
+                "who developed you",
+                "who made you",
+                "who built you",
+                "how can you develop",
+                "how do you develop",
+                "how can gima develop",
+                "how can gima improve",
+            }
+        ):
+            return (
+                "I am Gima, your local-first AI workspace in this project on your Mac. "
+                "Gimhan Gunarathne is the project owner/developer, and Codex can help implement upgrades in the codebase. "
+                "I do not rewrite myself silently: improvements should happen through a reviewable loop of inspect, plan, edit in the repo or copied workspace, run tests, write an upgrade report, then restart/sync after approval. "
+                "Linked models such as ChatGPT/OpenAI, Gemini, Anthropic, and OpenRouter can act as optional teacher engines, but the Gima app, memory, tools, and safety gates stay local-first."
+            )
+        if any(
+            phrase in normalized
+            for phrase in {
+                "self code",
+                "self-code",
+                "code itself",
+                "update itself",
+                "upgrade itself",
+                "self update",
+                "self-update",
+                "make a ai screen recorder button",
+                "make an ai screen recorder button",
+                "screen recorder button",
+                "record my screen",
+                "record the screen",
+                "screen record",
+                "screen recording",
+                "video record what i do",
+                "video record of what i do",
+                "record video of what i do",
+                "record my actions",
+            }
+        ):
+            return (
+                "Yes. Gima can self-code safely through the Coding panel. "
+                "Use Coding -> Create Vibe Code Plan to inspect the repo and prepare an isolated copy, then Implement in Isolated Copy to patch and test without touching the live app. "
+                "Live sync still needs review so Gima cannot silently rewrite itself. "
+                "This build also includes a local Screen Rec button: it records with browser permission, saves the WebM into hands/in, and attaches it to your next prompt."
+            )
+        if any(phrase in normalized for phrase in {"connect codex", "codex connect", "use codex", "codex mode", "link codex"}):
+            return (
+                "Codex is connected on this Mac through the local Codex CLI and Gima's Coding panel. "
+                "Use Coding -> Create Vibe Code Plan for a safe plan, then Implement in Isolated Copy to let Codex edit a copied workspace and run tests. "
+                "Gima will not silently overwrite the live app; review and sync stay gated."
+            )
+        return ""
+
+    def _memory_fallback_answer(self, message: str, matches, reason: str) -> str:
+        research_answer = self.research_reasoner.answer_from_memory(message, list(matches))
+        if research_answer:
+            self.memory.audit("research_reasoning_answer", message[:120], research_answer.trace_id, "ok")
+            return f"{reason}\n\n{research_answer.text}"
+        lines: List[str] = [f"{reason} I can still answer from Gima memory right now."]
+        if matches:
+            lines.append("Relevant memory:")
+            lines.extend(f"- {row['title']}: {row['content'][:240]}" for row in matches[:4])
+        else:
+            lines.append(
+                "I did not find a strong matching memory. Try a shorter prompt, or ask me to search/learn a specific topic."
+            )
+        if any(word in message.casefold() for word in {"fix", "bug", "web", "app", "code"}):
+            lines.append("For code/app work, I can inspect files, make a copied-workspace plan, run tests, and report results.")
+        return "\n".join(lines)
 
     def detect_heart_violation_attempt(self, message: str) -> str:
         normalized = " ".join(message.casefold().split())
@@ -601,3 +950,20 @@ class Agent:
         if has_heart_target and has_bypass_intent:
             return "Request attempted to bypass, ignore, disable, or violate Gima heart policies"
         return ""
+
+
+def _looks_like_quota_error(message: str) -> bool:
+    normalized = message.casefold()
+    return any(
+        phrase in normalized
+        for phrase in {
+            "quota",
+            "rate limit",
+            "rate_limit",
+            "too many requests",
+            "429",
+            "insufficient_quota",
+            "billing",
+            "free tier",
+        }
+    )

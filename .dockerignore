@@ -1,0 +1,15 @@
+.git
+.DS_Store
+.human-ai
+__pycache__
+*.pyc
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.venv
+venv
+env
+config.local.json
+apps
+tests
+scripts/*.log

@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import json
+import difflib
+import hashlib
 import re
+import shutil
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, List
@@ -42,6 +46,17 @@ class VibeCodePlan:
     snapshot_path: Path
     candidate_files: List[VibeCodeFile]
     record_id: str
+
+
+@dataclass(frozen=True)
+class VibeCodeExecution:
+    plan: VibeCodePlan
+    status: str
+    changed_files: List[str]
+    patch_path: Path
+    coding_log_path: Path
+    test_log_path: Path
+    tests_passed: bool
 
 
 class VibeCodingAgent:
@@ -117,6 +132,104 @@ class VibeCodingAgent:
             candidate_files,
             record_id,
         )
+
+    def implement(self, feature: str, max_files: int = 10, timeout_seconds: int = 900) -> VibeCodeExecution:
+        codex = shutil.which("codex")
+        if not codex:
+            raise RuntimeError("Codex CLI is required for self-coding but was not found")
+        plan = self.plan(feature, max_files=max_files)
+        root = plan.update_request.working_copy
+        before = self._file_snapshot(root)
+        coding_log_path = plan.update_request.request_dir / "coding.log"
+        test_log_path = plan.update_request.request_dir / "tests.log"
+        patch_path = plan.update_request.request_dir / "implemented.patch"
+        prompt = self._implementation_prompt(feature, plan.candidate_files)
+        command = [
+            codex,
+            "exec",
+            "--ephemeral",
+            "--skip-git-repo-check",
+            "--sandbox",
+            "workspace-write",
+            "--cd",
+            str(root),
+            prompt,
+        ]
+        try:
+            result = subprocess.run(command, cwd=str(root), capture_output=True, text=True, timeout=timeout_seconds)
+            coding_output = result.stdout + ("\n" + result.stderr if result.stderr else "")
+        except subprocess.TimeoutExpired as error:
+            coding_output = (error.stdout or "") + "\nSelf-coding timed out."
+            coding_log_path.write_text(coding_output, encoding="utf-8")
+            self._update_manifest(plan.update_request.manifest_path, {"status": "implementation_failed", "coding_error": "timeout"})
+            raise TimeoutError("Self-coding timed out inside the isolated working copy") from error
+        coding_log_path.write_text(coding_output, encoding="utf-8")
+        after = self._file_snapshot(root)
+        changed_files = sorted(path for path in set(before) | set(after) if before.get(path) != after.get(path))
+        patch_path.write_text(self._patch_text(root, before, changed_files), encoding="utf-8")
+        tests_passed, test_output = self._run_tests(root, timeout_seconds=min(timeout_seconds, 600))
+        test_log_path.write_text(test_output, encoding="utf-8")
+        status = "implemented_pending_review" if result.returncode == 0 and changed_files and tests_passed else "implementation_failed"
+        self._update_manifest(
+            plan.update_request.manifest_path,
+            {
+                "status": status,
+                "coding_engine": "codex",
+                "coding_return_code": str(result.returncode),
+                "coding_log_path": str(coding_log_path),
+                "implemented_patch_path": str(patch_path),
+                "test_log_path": str(test_log_path),
+                "tests_passed": str(tests_passed).lower(),
+                "changed_files": changed_files,
+            },
+        )
+        return VibeCodeExecution(plan, status, changed_files, patch_path, coding_log_path, test_log_path, tests_passed)
+
+    def _implementation_prompt(self, feature: str, candidate_files: List[VibeCodeFile]) -> str:
+        candidates = ", ".join(file.path for file in candidate_files) or "inspect the repository"
+        return (
+            "Implement this feature in the current copied workspace: " + feature + "\n\n"
+            "Candidate files: " + candidates + "\n"
+            "Inspect the code first, make the smallest complete change, and add focused tests. "
+            "Do not access or edit files outside the current workspace. Do not commit, push, deploy, "
+            "change credentials, weaken approval checks, or modify heart policies. Run relevant tests before finishing."
+        )
+
+    def _file_snapshot(self, root: Path) -> dict[str, tuple[str, str]]:
+        snapshot: dict[str, tuple[str, str]] = {}
+        for path in self._walk_text_files(root):
+            relative = path.relative_to(root).as_posix()
+            text = self._read_text(path)
+            snapshot[relative] = (hashlib.sha256(text.encode("utf-8")).hexdigest(), text)
+        return snapshot
+
+    def _patch_text(self, root: Path, before: dict[str, tuple[str, str]], changed_files: List[str]) -> str:
+        chunks: List[str] = []
+        for relative in changed_files:
+            old_text = before.get(relative, ("", ""))[1]
+            path = root / relative
+            new_text = self._read_text(path) if path.exists() else ""
+            chunks.extend(
+                difflib.unified_diff(
+                    old_text.splitlines(keepends=True),
+                    new_text.splitlines(keepends=True),
+                    fromfile=f"a/{relative}",
+                    tofile=f"b/{relative}",
+                )
+            )
+        return "".join(chunks)
+
+    def _run_tests(self, root: Path, timeout_seconds: int) -> tuple[bool, str]:
+        if (root / "tests").is_dir():
+            command = ["python3", "-m", "unittest", "discover", "-s", "tests"]
+        else:
+            return True, "No tests directory found; no automatic test command was run.\n"
+        try:
+            result = subprocess.run(command, cwd=str(root), capture_output=True, text=True, timeout=timeout_seconds)
+        except subprocess.TimeoutExpired as error:
+            return False, (error.stdout or "") + "\nTests timed out.\n"
+        output = result.stdout + ("\n" + result.stderr if result.stderr else "")
+        return result.returncode == 0, output
 
     def _rank_files(self, root: Path, feature: str, max_files: int) -> List[VibeCodeFile]:
         terms = self._terms(feature)

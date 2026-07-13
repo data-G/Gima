@@ -88,9 +88,24 @@ class ViolationConfig:
 
 @dataclass
 class TeacherModelsConfig:
-    openai_model: str = "gpt-4o-mini"
+    openai_model: str = "gpt-5.5"
     gemini_model: str = "gemini-2.5-flash"
+    anthropic_model: str = "claude-sonnet-4-5"
+    xai_model: str = "grok-4"
+    deepseek_model: str = "deepseek-chat"
+    openrouter_model: str = "openai/gpt-5.5"
     timeout_seconds: int = 120
+    free_quota_mode: bool = True
+    free_quota_daily_limits: Dict[str, int] = field(
+        default_factory=lambda: {
+            "chatgpt": 0,
+            "gemini": 40,
+            "anthropic": 5,
+            "xai": 0,
+            "deepseek": 0,
+            "openrouter": 40,
+        }
+    )
 
 
 @dataclass
@@ -133,6 +148,38 @@ class Config:
         if not path.is_absolute():
             path = self.resolved_workspace / path
         return path.resolve()
+
+    @property
+    def resolved_downloads_dir(self) -> Path:
+        return self.resolved_data_dir / "downloads"
+
+    @property
+    def resolved_hands_dir(self) -> Path:
+        return self.resolved_data_dir / "hands"
+
+    @property
+    def resolved_hands_in_dir(self) -> Path:
+        return self.resolved_hands_dir / "in"
+
+    @property
+    def resolved_hands_out_dir(self) -> Path:
+        return self.resolved_hands_dir / "out"
+
+    @property
+    def resolved_brain_csv_path(self) -> Path:
+        return self.resolved_data_dir / "brain" / "brain.csv"
+
+    @property
+    def resolved_stomach_dir(self) -> Path:
+        return self.resolved_data_dir / "stomach"
+
+    @property
+    def resolved_continuous_dir(self) -> Path:
+        return self.resolved_data_dir / "continuous"
+
+    @property
+    def resolved_usage_dir(self) -> Path:
+        return self.resolved_data_dir / "usage"
 
 
 def _merge_dataclass(instance: Any, values: Dict[str, Any]) -> Any:

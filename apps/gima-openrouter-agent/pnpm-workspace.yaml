@@ -1,0 +1,3 @@
+allowBuilds:
+  '@openrouter/sdk': false
+  esbuild: false
